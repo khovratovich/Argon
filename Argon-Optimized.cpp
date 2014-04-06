@@ -4,6 +4,7 @@
 
 #include "wmmintrin.h"
 #include <immintrin.h> 
+#include <emmintrin.h>
 #include <intrin.h> 
 #include <time.h> 
 #include <boost/thread.hpp>
@@ -34,6 +35,7 @@ using namespace std;
 
 //#define KAT
 #define _MEASURE
+//#define _MEASUREINT 
 #define THREADING
 
 
@@ -86,27 +88,23 @@ inline void AES_reduced_opt(int128 &u)
 	
 	for(unsigned i=0; i<AES_ROUNDS+1; ++i)
 	{
-		roundkey[i].m128i_i64[0] = subkeys64[i][0];
-		roundkey[i].m128i_i64[1] =  subkeys64[i][1];
+		roundkey[i]=_mm_set_epi64x(subkeys64[i][1],subkeys64[i][0]); 
 	}
 
-	__m128i acc0[8];
-	for(unsigned i=0; i<1; ++i)
-	{
-		acc0[i].m128i_u64[0] = u.i0^roundkey[0].m128i_i64[0];
-		acc0[i].m128i_u64[1] = u.i1^roundkey[0].m128i_i64[1];
-	}
+	__m128i acc0 = _mm_set_epi64x(u.i1,u.i0);
+	
+	acc0 = _mm_xor_si128(acc0, roundkey[0]);
 	
 	for(unsigned j=0; j<AES_ROUNDS; ++j)
 	{
 		for(unsigned i=0; i<1; ++i)
 		{
-			acc0[i] = _mm_aesenc_si128(acc0[i], roundkey[j+1]);
+			acc0 = _mm_aesenc_si128(acc0, roundkey[j+1]);
 		}
 	}
 	{	
-		u.i0 = acc0[0].m128i_i64[0];
-		u.i1 = acc0[0].m128i_i64[1];
+		u.i0 = acc0.m128i_u64[0];
+		u.i1 = acc0.m128i_u64[1];
 	}
 }
 
@@ -152,15 +150,14 @@ void ShuffleSlicesThr(__m128i* state, unsigned slice_length, unsigned slices)
 }
 
 
-inline void AES_reduced_batch_intr(__m128i* batch) //Encrypts 16 in parallel
+inline void AES_reduced_batch_intr(__m128i* batch) //Encrypts BATCH_SIZE in parallel
 {
 //Round Key initialization
 	__m128i roundkey[AES_ROUNDS+1];
 	
 	for(unsigned i=0; i<AES_ROUNDS+1; ++i)
 	{
-		roundkey[i].m128i_i64[0] = subkeys64[i][0];
-		roundkey[i].m128i_i64[1] =  subkeys64[i][1];
+		roundkey[i] = _mm_set_epi64x(subkeys64[i][1],subkeys64[i][0]);
 	}
 	for(unsigned i=0; i<BATCH_SIZE; ++i)
 	{
@@ -200,22 +197,24 @@ void SubGroupsThr(__m128i* state, unsigned group_n, unsigned distance) //element
 		{
 			//Computing X_i:
 			__m128i X[16];
-			X[0]=_mm_xor_si128(groups[j][3], _mm_xor_si128(groups[j][7],_mm_xor_si128(groups[j][11],_mm_xor_si128(groups[j][15],_mm_xor_si128(groups[j][19],_mm_xor_si128( groups[j][23],_mm_xor_si128( groups[j][27], groups[j][31])))))));
-			X[1]=_mm_xor_si128(groups[j][1] , _mm_xor_si128( groups[j][5] , _mm_xor_si128( groups[j][9] , _mm_xor_si128( groups[j][13] , _mm_xor_si128( groups[j][17] , _mm_xor_si128( groups[j][21] , _mm_xor_si128( groups[j][25] ,  groups[j][29])))))));
-			X[2]=_mm_xor_si128(groups[j][2] , _mm_xor_si128( groups[j][6] , _mm_xor_si128( groups[j][10] , _mm_xor_si128( groups[j][14] , _mm_xor_si128( groups[j][18] , _mm_xor_si128( groups[j][22] , _mm_xor_si128( groups[j][26] , groups[j][30])))))));
-			X[3]=_mm_xor_si128(groups[j][0] , _mm_xor_si128( groups[j][4] , _mm_xor_si128( groups[j][8] , _mm_xor_si128( groups[j][12] , _mm_xor_si128( groups[j][16] , _mm_xor_si128( groups[j][20] , _mm_xor_si128( groups[j][24] ,  groups[j][28])))))));
-			X[4]=_mm_xor_si128(groups[j][12] , _mm_xor_si128( groups[j][13] , _mm_xor_si128( groups[j][14] , _mm_xor_si128( groups[j][15] , _mm_xor_si128( groups[j][28] , _mm_xor_si128( groups[j][29] , _mm_xor_si128( groups[j][30] ,  groups[j][31])))))));
-			X[5]=_mm_xor_si128(groups[j][4] , _mm_xor_si128( groups[j][5] , _mm_xor_si128( groups[j][6] , _mm_xor_si128( groups[j][7] , _mm_xor_si128( groups[j][20] , _mm_xor_si128( groups[j][21] , _mm_xor_si128( groups[j][22] ,  groups[j][23])))))));
-			X[6]=_mm_xor_si128(groups[j][8] , _mm_xor_si128( groups[j][9] , _mm_xor_si128( groups[j][10] , _mm_xor_si128( groups[j][11] , _mm_xor_si128( groups[j][24] , _mm_xor_si128( groups[j][25] , _mm_xor_si128( groups[j][26] ,  groups[j][27])))))));
-			X[7]=_mm_xor_si128(groups[j][17] , _mm_xor_si128( groups[j][19] , _mm_xor_si128( groups[j][21] , _mm_xor_si128( groups[j][23] , _mm_xor_si128( groups[j][25] , _mm_xor_si128( groups[j][27] , _mm_xor_si128( groups[j][29] ,  groups[j][31])))))));
-			X[8]=_mm_xor_si128(groups[j][1] , _mm_xor_si128( groups[j][3] , _mm_xor_si128( groups[j][5] , _mm_xor_si128( groups[j][7] , _mm_xor_si128( groups[j][9] , _mm_xor_si128( groups[j][11] , _mm_xor_si128( groups[j][13] ,  groups[j][15])))))));
-			X[9]=_mm_xor_si128(groups[j][0] , _mm_xor_si128( groups[j][2] , _mm_xor_si128( groups[j][4] , _mm_xor_si128( groups[j][6] , _mm_xor_si128( groups[j][16] , _mm_xor_si128( groups[j][18] , _mm_xor_si128( groups[j][20] ,  groups[j][22])))))));
-			X[10]=_mm_xor_si128(groups[j][0] , _mm_xor_si128( groups[j][2] , _mm_xor_si128( groups[j][8] , _mm_xor_si128( groups[j][10] , _mm_xor_si128( groups[j][16] , _mm_xor_si128( groups[j][18] , _mm_xor_si128( groups[j][24] ,  groups[j][26])))))));
-			X[11]=_mm_xor_si128(groups[j][2] , _mm_xor_si128( groups[j][6] , _mm_xor_si128( groups[j][10] , _mm_xor_si128( groups[j][14] , _mm_xor_si128( groups[j][18] , _mm_xor_si128( groups[j][22] , _mm_xor_si128( groups[j][26] ,  groups[j][30])))))));
-			X[12]=_mm_xor_si128(groups[j][10] , _mm_xor_si128( groups[j][11] , _mm_xor_si128( groups[j][14] , _mm_xor_si128( groups[j][15] , _mm_xor_si128( groups[j][26] , _mm_xor_si128( groups[j][27] , _mm_xor_si128( groups[j][30] ,  groups[j][31])))))));
-			X[13]=_mm_xor_si128(groups[j][2] , _mm_xor_si128( groups[j][3] , _mm_xor_si128( groups[j][6] , _mm_xor_si128( groups[j][7] , _mm_xor_si128( groups[j][10] , _mm_xor_si128( groups[j][11] , _mm_xor_si128( groups[j][14] ,  groups[j][15])))))));
-			X[14]=_mm_xor_si128(groups[j][12] , _mm_xor_si128( groups[j][13] , _mm_xor_si128( groups[j][14] , _mm_xor_si128( groups[j][15] , _mm_xor_si128( groups[j][28] , _mm_xor_si128( groups[j][29] , _mm_xor_si128( groups[j][30] ,  groups[j][31])))))));
-			X[15]=_mm_xor_si128(groups[j][0] , _mm_xor_si128( groups[j][1] , _mm_xor_si128( groups[j][2] , _mm_xor_si128( groups[j][3] , _mm_xor_si128( groups[j][8] , _mm_xor_si128( groups[j][9] , _mm_xor_si128( groups[j][10] ,  groups[j][11])))))));
+			X[ 0] = _mm_xor_si128(groups[j][ 3], _mm_xor_si128(groups[j][ 7], _mm_xor_si128(groups[j][11], _mm_xor_si128(groups[j][15], _mm_xor_si128(groups[j][19], _mm_xor_si128(groups[j][23], _mm_xor_si128(groups[j][27], groups[j][31])))))));
+			X[ 1] = _mm_xor_si128(groups[j][ 1], _mm_xor_si128(groups[j][ 3], _mm_xor_si128(groups[j][ 9], _mm_xor_si128(groups[j][11], _mm_xor_si128(groups[j][17], _mm_xor_si128(groups[j][19], _mm_xor_si128(groups[j][25], groups[j][27])))))));
+			X[ 2] = _mm_xor_si128(groups[j][ 0], _mm_xor_si128(groups[j][ 2], _mm_xor_si128(groups[j][ 4], _mm_xor_si128(groups[j][ 6], _mm_xor_si128(groups[j][16], _mm_xor_si128(groups[j][18], _mm_xor_si128(groups[j][20], groups[j][22])))))));
+			X[ 3] = _mm_xor_si128(groups[j][ 1], _mm_xor_si128(groups[j][ 3], _mm_xor_si128(groups[j][ 5], _mm_xor_si128(groups[j][ 7], _mm_xor_si128(groups[j][ 9], _mm_xor_si128(groups[j][11], _mm_xor_si128(groups[j][13], groups[j][15])))))));
+			X[ 4] = _mm_xor_si128(groups[j][ 6], _mm_xor_si128(groups[j][ 7], _mm_xor_si128(groups[j][14], _mm_xor_si128(groups[j][15], _mm_xor_si128(groups[j][22], _mm_xor_si128(groups[j][23], _mm_xor_si128(groups[j][30], groups[j][31])))))));
+			X[ 5] = _mm_xor_si128(groups[j][10], _mm_xor_si128(groups[j][11], _mm_xor_si128(groups[j][14], _mm_xor_si128(groups[j][15], _mm_xor_si128(groups[j][26], _mm_xor_si128(groups[j][27], _mm_xor_si128(groups[j][30], groups[j][31])))))));
+			X[ 6] = _mm_xor_si128(groups[j][16], _mm_xor_si128(groups[j][17], _mm_xor_si128(groups[j][20], _mm_xor_si128(groups[j][21], _mm_xor_si128(groups[j][24], _mm_xor_si128(groups[j][25], _mm_xor_si128(groups[j][28], groups[j][29])))))));
+			X[ 7] = _mm_xor_si128(groups[j][12], _mm_xor_si128(groups[j][13], _mm_xor_si128(groups[j][14], _mm_xor_si128(groups[j][15], _mm_xor_si128(groups[j][28], _mm_xor_si128(groups[j][29], _mm_xor_si128(groups[j][30], groups[j][31])))))));
+			X[ 8] = _mm_xor_si128(groups[j][ 4], _mm_xor_si128(groups[j][ 5], _mm_xor_si128(groups[j][ 6], _mm_xor_si128(groups[j][ 7], _mm_xor_si128(groups[j][12], _mm_xor_si128(groups[j][13], _mm_xor_si128(groups[j][14], groups[j][15])))))));
+			X[ 9] = _mm_xor_si128(groups[j][16], _mm_xor_si128(groups[j][17], _mm_xor_si128(groups[j][18], _mm_xor_si128(groups[j][19], _mm_xor_si128(groups[j][20], _mm_xor_si128(groups[j][21], _mm_xor_si128(groups[j][22], groups[j][23])))))));
+			X[10] = _mm_xor_si128(groups[j][ 1], _mm_xor_si128(groups[j][ 5], _mm_xor_si128(groups[j][ 9], _mm_xor_si128(groups[j][13], _mm_xor_si128(groups[j][17], _mm_xor_si128(groups[j][21], _mm_xor_si128(groups[j][25], groups[j][29])))))));
+			X[11] = _mm_xor_si128(groups[j][ 2], _mm_xor_si128(groups[j][ 6], _mm_xor_si128(groups[j][10], _mm_xor_si128(groups[j][14], _mm_xor_si128(groups[j][18], _mm_xor_si128(groups[j][22], _mm_xor_si128(groups[j][26], groups[j][30])))))));
+			X[12] = _mm_xor_si128(groups[j][ 4], _mm_xor_si128(groups[j][ 5], _mm_xor_si128(groups[j][ 6], _mm_xor_si128(groups[j][ 7], _mm_xor_si128(groups[j][20], _mm_xor_si128(groups[j][21], _mm_xor_si128(groups[j][22], groups[j][23])))))));
+			X[13] = _mm_xor_si128(groups[j][ 8], _mm_xor_si128(groups[j][ 9], _mm_xor_si128(groups[j][10], _mm_xor_si128(groups[j][11], _mm_xor_si128(groups[j][24], _mm_xor_si128(groups[j][25], _mm_xor_si128(groups[j][26], groups[j][27])))))));
+			X[14] = _mm_xor_si128(groups[j][ 0], _mm_xor_si128(groups[j][ 1], _mm_xor_si128(groups[j][ 2], _mm_xor_si128(groups[j][ 3], _mm_xor_si128(groups[j][ 8], _mm_xor_si128(groups[j][ 9], _mm_xor_si128(groups[j][10], groups[j][11])))))));
+			X[15] = _mm_xor_si128(groups[j][ 0], _mm_xor_si128(groups[j][ 4], _mm_xor_si128(groups[j][ 8], _mm_xor_si128(groups[j][12], _mm_xor_si128(groups[j][16], _mm_xor_si128(groups[j][20], _mm_xor_si128(groups[j][24], groups[j][28])))))));
+
+
 
 			
 
@@ -260,7 +259,7 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 	
 	fprintf(fp,"OPTIMIZED:\nT_cost: %d, Memory: %d KBytes\n", t_cost, m_cost);
 #endif
-	#ifdef _MEASURE
+	#ifdef _MEASUREINT
 	unsigned __int64 i1,i2,i3,i4,i5,i6,i7,d1,d2;
 	unsigned int ui1,ui2,ui3,ui4,ui5,ui6,ui7;
 	i1 = __rdtscp(&ui1);
@@ -367,7 +366,7 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 
 	//2. Filling blocks
 	unsigned state_size = m_cost*64;
-#ifdef _MEASURE
+#ifdef _MEASUREINT
 			i3 = __rdtscp(&ui3);
 			d1 = (i3-i1)/(state_size);
 			printf("First phase %2.2f cpb\n", (float)d1/(16));
@@ -383,21 +382,21 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 	{
 		__m128i tmp;
 		unsigned start=width*i;
-		tmp.m128i_i64[0] = tmp.m128i_i64[1] = 0;
+		tmp.m128i_u64[0] = tmp.m128i_u64[1] = 0;
 		for(unsigned j=0; j<8; ++j)
-			tmp.m128i_i64[0] ^= ((u64)Input[12*i+j])<<(8*j);
+			tmp.m128i_u64[0] ^= ((u64)Input[12*i+j])<<(8*j);
 		for(unsigned j=0; j<4; ++j)
-			tmp.m128i_i64[1]^= ((u64)Input[12*i+8+j])<<(8*j);
-		tmp.m128i_i64[1] ^= ((u64)i)<<(32);
+			tmp.m128i_u64[1]^= ((u64)Input[12*i+8+j])<<(8*j);
+		tmp.m128i_u64[1] ^= ((u64)i)<<(32);
 		for(unsigned l=0; l<width; l++)
 		{
 			state[start+l] = tmp;
-			tmp.m128i_i64[1] += ((u64)GROUP_SIZE)<<(32);
+			tmp.m128i_u64[1] += ((u64)GROUP_SIZE)<<(32);
 		}
 	}
 
 	memset(Input,0,INPUT_SIZE);
-#ifdef _MEASURE
+#ifdef _MEASUREINT
 			i2 = __rdtscp(&ui2);
 			d1 = (i2-i3)/(state_size);
 			printf("Filling phase %2.2f cpb\n", (float)d1/(16));
@@ -406,7 +405,7 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 	fprintf(fp,"Blocks:\n");
 	for(unsigned i=0; i<state_size; ++i)
 	{
-		fprintf(fp,"Block %3.3d: H: %.16llx L: %.16llx",i,state[i].m128i_i64[1],state[i].m128i_i64[0]);
+		fprintf(fp,"Block %3.3d: H: %.16llx L: %.16llx",i,state[i].m128i_u64[1],state[i].m128i_u64[0]);
 		fprintf(fp,"\n");
 	}
 	fprintf(fp,"\n");
@@ -429,7 +428,7 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 	InitialRound(state,state_size);
 #endif
 
-	#ifdef _MEASURE
+	#ifdef _MEASUREINT
 			i4 = __rdtscp(&ui4);
 			d1 = (i4-i2)/(state_size);
 			printf("Initial phase %2.2f cpb\n", (float)d1/(16));
@@ -438,7 +437,7 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 	fprintf(fp,"Initial transformation:\nBlocks:\n");
 	for(unsigned i=0; i<state_size; ++i)
 	{
-		fprintf(fp,"Block %3.3d: H: %.16llx L: %.16llx",i,state[i].m128i_i64[1],state[i].m128i_i64[0]);
+		fprintf(fp,"Block %3.3d: H: %.16llx L: %.16llx",i,state[i].m128i_u64[1],state[i].m128i_u64[0]);
 		fprintf(fp,"\n");
 	}
 	fprintf(fp,"\n");
@@ -456,12 +455,11 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 			Threads.add_thread(new boost::thread(SubGroupsThr,state+i*groups_per_thread,groups_per_thread, distance));
 		//Last thread with possibly larger area
 		Threads.add_thread(new boost::thread(SubGroupsThr,state+(threads-1)*groups_per_thread, distance-(threads-1)*groups_per_thread,distance));
-
 		Threads.join_all();
 #else
 		SubGroupsIntr(state,state_size);
 #endif
-#ifdef _MEASURE
+#ifdef _MEASUREINT
 			i5 = __rdtscp(&ui3);
 			d1 = (i5-i4)/(state_size);
 			printf("SubGroups %2.2f cpb\n", (float)d1/(16));
@@ -470,35 +468,26 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 	fprintf(fp,"Round %d SubGroups:\nBlocks:\n",l+1);
 	for(unsigned i=0; i<state_size; ++i)
 	{
-		fprintf(fp,"Block %3.3d: H: %.16llx L: %.16llx",i,state[i].m128i_i64[1],state[i].m128i_i64[0]);
+		fprintf(fp,"Block %3.3d: H: %.16llx L: %.16llx",i,state[i].m128i_u64[1],state[i].m128i_u64[0]);
 		fprintf(fp,"\n");
 	}
 	fprintf(fp,"\n");
 		
 #endif
 #ifdef THREADING
-	/*unsigned slices_per_thread = GROUP_SIZE/threads;//Area size of each thread.
+	unsigned slices_per_thread = GROUP_SIZE/threads;//Area size of each thread.
 	unsigned slice_length = state_size/GROUP_SIZE;
 	for(unsigned i=0; i<threads-1; ++i)
 			Threads.add_thread(new boost::thread(ShuffleSlicesThr,state+i*slices_per_thread*slice_length,slice_length, slices_per_thread));
 	//Last thread
 	Threads.add_thread(new boost::thread(ShuffleSlicesThr,state+(threads-1)*slices_per_thread*slice_length, slice_length,GROUP_SIZE-(threads-1)*slices_per_thread));
 	//Wrapping up
-	Threads.join_all();*/
-
-	boost::thread thread0(ShuffleSlicesThr,state,state_size/GROUP_SIZE,8);
-	boost::thread thread1(ShuffleSlicesThr,state+state_size/4,state_size/GROUP_SIZE,8);
-	boost::thread thread2(ShuffleSlicesThr,state+2*state_size/4,state_size/GROUP_SIZE,8);
-	boost::thread thread3(ShuffleSlicesThr,state+3*state_size/4,state_size/GROUP_SIZE,8);
-	thread0.join();
-	thread1.join();
-	thread2.join();
-	thread3.join();
+	Threads.join_all();
 
 #else
 		ShuffleSlicesIntr(state,state_size);
 #endif
-#ifdef _MEASURE
+#ifdef _MEASUREINT
 			i4 = __rdtscp(&ui4);
 			d1 = (i4-i5)/(state_size);
 			printf("ShuffleSlices %2.2f cpb\n", (float)d1/(16));
@@ -507,7 +496,7 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 	fprintf(fp,"ShuffleSlices:\nBlocks:\n");
 	for(unsigned i=0; i<state_size; ++i)
 	{
-		fprintf(fp,"Block %3.3d: H: %.16llx L: %.16llx",i,state[i].m128i_i64[1],state[i].m128i_i64[0]);
+		fprintf(fp,"Block %3.3d: H: %.16llx L: %.16llx",i,state[i].m128i_u64[1],state[i].m128i_u64[0]);
 		fprintf(fp,"\n");
 	}
 	fprintf(fp,"\n");
@@ -533,13 +522,13 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 	fprintf(fp,"Last round: SubGroups:\nBlocks:\n");
 	for(unsigned i=0; i<state_size; ++i)
 	{
-		fprintf(fp,"Block %3.3d: H: %.16llx L: %.16llx",i,state[i].m128i_i64[1],state[i].m128i_i64[0]);
+		fprintf(fp,"Block %3.3d: H: %.16llx L: %.16llx",i,state[i].m128i_u64[1],state[i].m128i_u64[0]);
 		fprintf(fp,"\n");
 	}
 	fprintf(fp,"\n");
 		
 #endif
-		#ifdef _MEASURE
+		#ifdef _MEASUREINT
 			i5 = __rdtscp(&ui4);
 #endif
 	__m128i a1_intr;
@@ -553,8 +542,8 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 		else 
 			a2_intr = _mm_xor_si128(a2_intr, state[i]);
 	}
-	int128 a1(a1_intr.m128i_i64[0],a1_intr.m128i_i64[1]);
-	int128 a2(a2_intr.m128i_i64[0],a2_intr.m128i_i64[1]);
+	int128 a1(a1_intr.m128i_u64[0],a1_intr.m128i_u64[1]);
+	int128 a2(a2_intr.m128i_u64[0],a2_intr.m128i_u64[1]);
 	if(outlen<=16)
 	{
 		int128 tag = a1^a2;
@@ -585,7 +574,7 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 		for(unsigned i=16; i<outlen; ++i)
 			((unsigned char*)out)[i] = tag2[i-16];
 	}
-		#ifdef _MEASURE
+		#ifdef _MEASUREINT
 			i6 = __rdtscp(&ui6);
 			d1 = (i6-i5)/(state_size);
 			printf("Final phase %2.2f cpb\n", (float)d1/(16));
@@ -605,13 +594,56 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 }
 
 
-		int PHS(void *out, size_t outlen, const void *in, size_t inlen, const void *salt, size_t saltlen, 
+int PHS(void *out, size_t outlen, const void *in, size_t inlen, const void *salt, size_t saltlen, 
 	unsigned int t_cost, unsigned int m_cost,unsigned int threads=1)
-//The major difference is that the slices are stored sequentially
 {
 	return ArgonFast64(out, outlen, in, inlen, salt, saltlen, NULL, 0, t_cost, m_cost, threads);
 }
 
+void GenKat(unsigned outlen)
+{
+	unsigned char out[32];
+	unsigned char zero_array[256];
+	memset(zero_array,0,256);
+	unsigned t_cost = 3;
+	unsigned m_cost = 2;
+#ifdef _KAT
+	remove("kat-opt.log");
+#endif
+	for(unsigned p_len=0; p_len<=256; p_len+=64)
+	{
+		for(unsigned s_len=16; s_len<=16; s_len+=8)
+		{
+#ifdef _MEASURE
+			unsigned __int64 i1,i2,i3,d1,d2;
+			unsigned int ui1,ui2,ui3;
+#endif
+	
+
+			outlen = s_len;
+#ifdef _MEASURE
+			clock_t start = clock();
+			i2 = __rdtscp(&ui2);
+#endif
+			
+			PHS(out,outlen,sbox,p_len,subkeys[5],s_len,t_cost,m_cost);
+			
+#ifdef _MEASURE
+			i3 = __rdtscp(&ui3);
+			clock_t finish = clock();
+
+			d2 = (i3-i2)/(m_cost);
+			float mcycles = (float)(i3-i2)/(1<<20);
+			printf("Argon:  %d iterations %2.2f cpb %2.2f Mcycles\n", t_cost, (float)d2/1000,mcycles);
+
+
+			
+			float run_time = ((float)finish-start)/(CLOCKS_PER_SEC);
+			printf("%2.4f seconds\n", run_time);
+			#endif
+		}
+	}
+}
 
 int main(int argc, char* argv[])
 {	
@@ -683,6 +715,22 @@ int main(int argc, char* argv[])
 			 }
 		 }
 	 }
+	 #ifdef _MEASURE
+	 unsigned __int64 i1,i2,i3,d1,d2;
+			unsigned int ui1,ui2,ui3;
+			clock_t start = clock();
+			i2 = __rdtscp(&ui2);
+#endif
 	PHS(out,outlen,sbox,p_len,subkeys[5],s_len,t_cost,m_cost,threads);
+
+	#ifdef _MEASURE
+			i3 = __rdtscp(&ui3);
+			clock_t finish = clock();
+			d2 = (i3-i2)/(m_cost);
+			float mcycles = (float)(i3-i2)/(1<<20);
+			printf("Argon:  %d iterations %2.2f cpb %2.2f Mcycles\n", t_cost, (float)d2/1000,mcycles);
+			float run_time = ((float)finish-start)/(CLOCKS_PER_SEC);
+			printf("%2.4f seconds\n", run_time);
+			#endif
 	return 0;
 }
