@@ -30,8 +30,8 @@ using namespace std;
 #define u64 unsigned long long int
 
 #define KAT
-//#define _MEASURE
-
+#define _MEASURE
+//#define KATINT
 
 unsigned char subkeys[11][16]={
 	{0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, },
@@ -319,7 +319,7 @@ int ArgonRef(void *out, size_t outlen, const void *in, size_t inlen, const void 
 	//1.10 Padding
 	for(unsigned i=6*LENGTH_SIZE+inlen+saltlen+secretlen; i<INPUT_SIZE; ++i)
 		Input[i] = 0;
-#ifdef KAT
+#ifdef KATINT
 	fprintf(fp,"Input string:\n");
 	for(unsigned i=0; i<INPUT_SIZE; ++i)
 	{
@@ -353,7 +353,7 @@ int ArgonRef(void *out, size_t outlen, const void *in, size_t inlen, const void 
 		state[i].i1 ^= ((u64)i)<<(32);
 	}
 	memset(Input,0,INPUT_SIZE);
-#ifdef KAT
+#ifdef KATINT
 	fprintf(fp,"Blocks:\n");
 	for(unsigned i=0; i<state_size; ++i)
 	{
@@ -370,7 +370,7 @@ int ArgonRef(void *out, size_t outlen, const void *in, size_t inlen, const void 
 		AES_reduced(state[i]);
 	}
 
-	#ifdef KAT
+	#ifdef KATINT
 	fprintf(fp,"Initial transformation:\nBlocks:\n");
 	for(unsigned i=0; i<state_size; ++i)
 	{
@@ -385,7 +385,7 @@ int ArgonRef(void *out, size_t outlen, const void *in, size_t inlen, const void 
 	for(unsigned l=0; l <t_cost; ++l)
 	{
 		SubGroups(state,state_size);
-#ifdef KAT
+#ifdef KATINT
 	fprintf(fp,"Round %d SubGroups:\nBlocks:\n",l+1);
 	for(unsigned i=0; i<state_size; ++i)
 	{
@@ -396,7 +396,7 @@ int ArgonRef(void *out, size_t outlen, const void *in, size_t inlen, const void 
 		
 #endif
 		ShuffleSlices(state,state_size);
-			#ifdef KAT
+			#ifdef KATINT
 	fprintf(fp,"ShuffleSlices:\nBlocks:\n");
 	for(unsigned i=0; i<state_size; ++i)
 	{
@@ -410,7 +410,7 @@ int ArgonRef(void *out, size_t outlen, const void *in, size_t inlen, const void 
 
 	//5.Finalization
 	SubGroups(state,state_size);
-#ifdef KAT
+#ifdef KATINT
 	fprintf(fp,"Last round: SubGroups:\nBlocks:\n");
 	for(unsigned i=0; i<state_size; ++i)
 	{
@@ -494,12 +494,12 @@ void GenKat(unsigned outlen)
 	memset(zero_array,0,256);
 	unsigned t_cost = 3;
 	unsigned m_cost = 2;
-#ifdef _KAT
+#ifdef KAT
 	remove("kat.log");
 #endif
-	for(unsigned p_len=0; p_len<=256; p_len+=64)
+	for(unsigned p_len=0; p_len<=256; p_len+=32)
 	{
-		for(unsigned s_len=16; s_len<=16; s_len+=8)
+		for(unsigned s_len=8; s_len<=32; s_len+=8)
 		{
 #ifdef _MEASURE
 			unsigned __int64 i1,i2,i3,d1,d2;
