@@ -47,7 +47,7 @@ unsigned char subkeys[11][16]={
 	{0x13, 0x11, 0x1d, 0x7f, 0xe3, 0x94, 0x4a, 0x17, 0xf3, 0x07, 0xa7, 0x8b, 0x4d, 0x2b, 0x30, 0xc5, }};
 
 u64 subkeys64[11][2]=
-	{{0x0706050403020100, 0x0f0e0d0c0b0a0908},
+{{0x0706050403020100, 0x0f0e0d0c0b0a0908},
 {0xfa72afd2fd74aad6, 0xfe76abd6f178a6da},
 {0xf1bd3d640bcf92b6, 0xfeb3306800c59bbe},
 {0xbfc9c2d24e74ffb6, 0x41bf6904bf0c596c},
@@ -481,7 +481,6 @@ int ArgonRef(void *out, size_t outlen, const void *in, size_t inlen, const void 
 
 int PHS(void *out, size_t outlen, const void *in, size_t inlen, const void *salt, size_t saltlen, 
 	unsigned int t_cost, unsigned int m_cost)
-//The major difference is that the slices are stored sequentially
 {
 	return ArgonRef(out, outlen, in, inlen, salt, saltlen, NULL, 0, t_cost, m_cost);
 }
