@@ -1,14 +1,26 @@
-// Argon-Optimized.cpp : Defines the entry point for the console application.
-//
+// Argon-Optimized.cpp
+// Optimized code for Windows x86/x64 architectures. Produced with Visual Studio 2010.
+// Code written by Dmitry Khovratovich, khovratovich@gmail.com
+// Requires BOOST libraries for threading
+//To fileprint intermediate variables, uncomment #define KAT
+//To enable measurement of SubGroups and ShuffleSlices, uncomment #define _MEASUREINT
+//To disable threading, comment #define THREADING
+
+//#define KAT
+#define _MEASURE
+//#define _MEASUREINT 
+#define THREADING
+
 #include "stdio.h"
 
 #include "wmmintrin.h"
 #include <immintrin.h> 
 #include <emmintrin.h>
 #include <intrin.h> 
-#include <time.h> 
-#include <boost/thread.hpp>
-
+#include <time.h>
+#ifdef THREADING
+	#include <boost/thread.hpp>
+#endif
 #include <string>
 using namespace std;
 
@@ -33,10 +45,7 @@ using namespace std;
 #define u32 unsigned __int32
 #define u64 unsigned long long int
 
-//#define KAT
-#define _MEASURE
-//#define _MEASUREINT 
-#define THREADING
+
 
 
 unsigned char subkeys[11][16]={
@@ -149,6 +158,23 @@ void ShuffleSlicesThr(__m128i* state, unsigned slice_length, unsigned slices)
 	}
 }
 
+void ShuffleSlicesIntr(__m128i* state, unsigned width)
+{
+	for(unsigned s=0; s<GROUP_SIZE; ++s) //Loop on slices
+	{
+		unsigned j=0;
+		for(unsigned i=0; i<width/GROUP_SIZE; ++i)
+		{
+			unsigned index1 = s*(width/GROUP_SIZE) + i; 
+			__m128i v1 = state[index1];
+			j =(j+ v1.m128i_i32[0] )%(width/GROUP_SIZE);
+			unsigned index2 = s*(width/GROUP_SIZE)+j;
+			state[index1]=state[index2];
+			state[index2] = v1;
+		}
+	}
+}
+
 
 inline void AES_reduced_batch_intr(__m128i* batch) //Encrypts BATCH_SIZE in parallel
 {
@@ -172,6 +198,71 @@ inline void AES_reduced_batch_intr(__m128i* batch) //Encrypts BATCH_SIZE in para
 		}
 	}
 	
+}
+
+void SubGroupsIntr(__m128i* state, unsigned width)
+{
+	__m128i groups[CACHE_SIZE][GROUP_SIZE];
+	unsigned cached=0;
+	if(width < (32*GROUP_SIZE))
+		cached = width/GROUP_SIZE;
+	else
+		cached = 8;
+	for(unsigned i=0; i<width/GROUP_SIZE; i+=cached)
+	{
+		//Storing group inputs
+		for(unsigned l=0; l<GROUP_SIZE; ++l)
+		{
+			for(unsigned j=0; j<cached; ++j)
+			{
+				groups[j][l]= state[i+j+l*(width/32)];
+			}
+		}
+		for(unsigned j=0; j<cached; ++j)
+		{
+			//Computing X_i:
+			__m128i X[16];
+			X[ 0] = _mm_xor_si128(groups[j][ 3], _mm_xor_si128(groups[j][ 7], _mm_xor_si128(groups[j][11], _mm_xor_si128(groups[j][15], _mm_xor_si128(groups[j][19], _mm_xor_si128(groups[j][23], _mm_xor_si128(groups[j][27], groups[j][31])))))));
+			X[ 1] = _mm_xor_si128(groups[j][ 1], _mm_xor_si128(groups[j][ 3], _mm_xor_si128(groups[j][ 9], _mm_xor_si128(groups[j][11], _mm_xor_si128(groups[j][17], _mm_xor_si128(groups[j][19], _mm_xor_si128(groups[j][25], groups[j][27])))))));
+			X[ 2] = _mm_xor_si128(groups[j][ 0], _mm_xor_si128(groups[j][ 2], _mm_xor_si128(groups[j][ 4], _mm_xor_si128(groups[j][ 6], _mm_xor_si128(groups[j][16], _mm_xor_si128(groups[j][18], _mm_xor_si128(groups[j][20], groups[j][22])))))));
+			X[ 3] = _mm_xor_si128(groups[j][ 1], _mm_xor_si128(groups[j][ 3], _mm_xor_si128(groups[j][ 5], _mm_xor_si128(groups[j][ 7], _mm_xor_si128(groups[j][ 9], _mm_xor_si128(groups[j][11], _mm_xor_si128(groups[j][13], groups[j][15])))))));
+			X[ 4] = _mm_xor_si128(groups[j][ 6], _mm_xor_si128(groups[j][ 7], _mm_xor_si128(groups[j][14], _mm_xor_si128(groups[j][15], _mm_xor_si128(groups[j][22], _mm_xor_si128(groups[j][23], _mm_xor_si128(groups[j][30], groups[j][31])))))));
+			X[ 5] = _mm_xor_si128(groups[j][10], _mm_xor_si128(groups[j][11], _mm_xor_si128(groups[j][14], _mm_xor_si128(groups[j][15], _mm_xor_si128(groups[j][26], _mm_xor_si128(groups[j][27], _mm_xor_si128(groups[j][30], groups[j][31])))))));
+			X[ 6] = _mm_xor_si128(groups[j][16], _mm_xor_si128(groups[j][17], _mm_xor_si128(groups[j][20], _mm_xor_si128(groups[j][21], _mm_xor_si128(groups[j][24], _mm_xor_si128(groups[j][25], _mm_xor_si128(groups[j][28], groups[j][29])))))));
+			X[ 7] = _mm_xor_si128(groups[j][12], _mm_xor_si128(groups[j][13], _mm_xor_si128(groups[j][14], _mm_xor_si128(groups[j][15], _mm_xor_si128(groups[j][28], _mm_xor_si128(groups[j][29], _mm_xor_si128(groups[j][30], groups[j][31])))))));
+			X[ 8] = _mm_xor_si128(groups[j][ 4], _mm_xor_si128(groups[j][ 5], _mm_xor_si128(groups[j][ 6], _mm_xor_si128(groups[j][ 7], _mm_xor_si128(groups[j][12], _mm_xor_si128(groups[j][13], _mm_xor_si128(groups[j][14], groups[j][15])))))));
+			X[ 9] = _mm_xor_si128(groups[j][16], _mm_xor_si128(groups[j][17], _mm_xor_si128(groups[j][18], _mm_xor_si128(groups[j][19], _mm_xor_si128(groups[j][20], _mm_xor_si128(groups[j][21], _mm_xor_si128(groups[j][22], groups[j][23])))))));
+			X[10] = _mm_xor_si128(groups[j][ 1], _mm_xor_si128(groups[j][ 5], _mm_xor_si128(groups[j][ 9], _mm_xor_si128(groups[j][13], _mm_xor_si128(groups[j][17], _mm_xor_si128(groups[j][21], _mm_xor_si128(groups[j][25], groups[j][29])))))));
+			X[11] = _mm_xor_si128(groups[j][ 2], _mm_xor_si128(groups[j][ 6], _mm_xor_si128(groups[j][10], _mm_xor_si128(groups[j][14], _mm_xor_si128(groups[j][18], _mm_xor_si128(groups[j][22], _mm_xor_si128(groups[j][26], groups[j][30])))))));
+			X[12] = _mm_xor_si128(groups[j][ 4], _mm_xor_si128(groups[j][ 5], _mm_xor_si128(groups[j][ 6], _mm_xor_si128(groups[j][ 7], _mm_xor_si128(groups[j][20], _mm_xor_si128(groups[j][21], _mm_xor_si128(groups[j][22], groups[j][23])))))));
+			X[13] = _mm_xor_si128(groups[j][ 8], _mm_xor_si128(groups[j][ 9], _mm_xor_si128(groups[j][10], _mm_xor_si128(groups[j][11], _mm_xor_si128(groups[j][24], _mm_xor_si128(groups[j][25], _mm_xor_si128(groups[j][26], groups[j][27])))))));
+			X[14] = _mm_xor_si128(groups[j][ 0], _mm_xor_si128(groups[j][ 1], _mm_xor_si128(groups[j][ 2], _mm_xor_si128(groups[j][ 3], _mm_xor_si128(groups[j][ 8], _mm_xor_si128(groups[j][ 9], _mm_xor_si128(groups[j][10], groups[j][11])))))));
+			X[15] = _mm_xor_si128(groups[j][ 0], _mm_xor_si128(groups[j][ 4], _mm_xor_si128(groups[j][ 8], _mm_xor_si128(groups[j][12], _mm_xor_si128(groups[j][16], _mm_xor_si128(groups[j][20], _mm_xor_si128(groups[j][24], groups[j][28])))))));
+
+			
+
+			for(unsigned k=0; k<16;k+=BATCH_SIZE)
+			{
+				AES_reduced_batch_intr(X+k);//Computing F's
+			}
+			for(unsigned k=0; k<16;++k)
+			{
+				groups[j][2*k] =  _mm_xor_si128(groups[j][2*k],X[k]); //XORs
+				groups[j][2*k+1] = _mm_xor_si128(groups[j][2*k+1],X[k]); 
+			}
+			for(unsigned k=0; k<32;k+=BATCH_SIZE)
+			{
+				AES_reduced_batch_intr(groups[j]+k);//Computing F's
+			}
+		}//end of group computation
+		for(unsigned l=0; l<32; ++l)
+		{
+			for(unsigned j=0; j<cached; ++j)
+			{
+				state[i+j+l*(width/32)]=groups[j][l];
+			}
+		}
+	}
 }
 
 
@@ -636,7 +727,10 @@ void GenKat(unsigned outlen)
 			float mcycles = (float)(i3-i2)/(1<<20);
 			printf("Argon:  %d iterations %2.2f cpb %2.2f Mcycles\n", t_cost, (float)d2/1000,mcycles);
 
-
+			printf("Tag: ");
+			for(unsigned i=0; i<outlen; ++i)
+				printf("%2.2x ",((unsigned char*)out)[i]);
+			printf("\n");
 			
 			float run_time = ((float)finish-start)/(CLOCKS_PER_SEC);
 			printf("%2.4f seconds\n", run_time);
@@ -657,80 +751,88 @@ int main(int argc, char* argv[])
 	unsigned s_len=16;
 
 	//GenKat(32);
+	if(argc==1)
+	{
+		printf("-taglength <Tag Length 0..31> -logmcost <Base 2 logarithm of m_cost 0..23> -tcost <t_cost 0..2^24> -pwdlen <Password length> -saltlen <Salt Length> -threads <Number of threads 0..31>\n");
+		printf("No arguments given. Argon is called with default parameters t_cost =3 and m_cost=2. Passwords are substrings of the AES S-box lookup table.\n");
+		GenKat(32);
+	}
 
-	 for (int i=1; i< argc; i++) 
-	 {
-		 if(strcmp(argv[i],"-taglength")==0)
+	else
+		{for (int i=1; i< argc; i++) 
 		 {
-			 if(i<argc-1)
+			 if(strcmp(argv[i],"-taglength")==0)
 			 {
-				 i++;
-				 outlen = atoi(argv[i])%32;
-				 continue;
+				 if(i<argc-1)
+				 {
+					 i++;
+					 outlen = atoi(argv[i])%32;
+					 continue;
+				 }
+			 }
+			 if(strcmp(argv[i],"-logmcost")==0)
+			 {
+				 if(i<argc-1)
+				 {
+					 i++;
+					 m_cost = 1<<(atoi(argv[i])%24);
+					 continue;
+				 }
+			 }
+			 if(strcmp(argv[i],"-tcost")==0)
+			 {
+				 if(i<argc-1)
+				 {
+					 i++;
+					 t_cost = atoi(argv[i])&0xffffff;
+					 continue;
+				 }
+			 }
+			 if(strcmp(argv[i],"-pwdlen")==0)
+			 {
+				 if(i<argc-1)
+				 {
+					 i++;
+					 p_len = atoi(argv[i])%160;
+					 continue;
+				 }
+			 }
+			 if(strcmp(argv[i],"-saltlen")==0)
+			 {
+				 if(i<argc-1)
+				 {
+					 i++;
+					 s_len = atoi(argv[i])%32;
+					 continue;
+				 }
+			 }
+			 if(strcmp(argv[i],"-threads")==0)
+			 {
+				 if(i<argc-1)
+				 {
+					 i++;
+					 threads = atoi(argv[i])%32;
+					 continue;
+				 }
 			 }
 		 }
-		 if(strcmp(argv[i],"-logmcost")==0)
-		 {
-			 if(i<argc-1)
-			 {
-				 i++;
-				 m_cost = 1<<(atoi(argv[i])%24);
-				 continue;
-			 }
-		 }
-		 if(strcmp(argv[i],"-tcost")==0)
-		 {
-			 if(i<argc-1)
-			 {
-				 i++;
-				 t_cost = atoi(argv[i])&0xffffff;
-				 continue;
-			 }
-		 }
-		 if(strcmp(argv[i],"-pwdlen")==0)
-		 {
-			 if(i<argc-1)
-			 {
-				 i++;
-				 p_len = atoi(argv[i])%160;
-				 continue;
-			 }
-		 }
-		 if(strcmp(argv[i],"-saltlen")==0)
-		 {
-			 if(i<argc-1)
-			 {
-				 i++;
-				 s_len = atoi(argv[i])%32;
-				 continue;
-			 }
-		 }
-		 if(strcmp(argv[i],"-threads")==0)
-		 {
-			 if(i<argc-1)
-			 {
-				 i++;
-				 threads = atoi(argv[i])%32;
-				 continue;
-			 }
-		 }
-	 }
-	 #ifdef _MEASURE
-	 unsigned __int64 i1,i2,i3,d1,d2;
-			unsigned int ui1,ui2,ui3;
-			clock_t start = clock();
-			i2 = __rdtscp(&ui2);
-#endif
-	PHS(out,outlen,sbox,p_len,subkeys[5],s_len,t_cost,m_cost,threads);
+		 #ifdef _MEASURE
+		 unsigned __int64 i1,i2,i3,d1,d2;
+				unsigned int ui1,ui2,ui3;
+				clock_t start = clock();
+				i2 = __rdtscp(&ui2);
+	#endif
+		PHS(out,outlen,sbox,p_len,subkeys[5],s_len,t_cost,m_cost,threads);
 
-	#ifdef _MEASURE
-			i3 = __rdtscp(&ui3);
-			clock_t finish = clock();
-			d2 = (i3-i2)/(m_cost);
-			float mcycles = (float)(i3-i2)/(1<<20);
-			printf("Argon:  %d iterations %2.2f cpb %2.2f Mcycles\n", t_cost, (float)d2/1000,mcycles);
-			float run_time = ((float)finish-start)/(CLOCKS_PER_SEC);
-			printf("%2.4f seconds\n", run_time);
-			#endif
+		#ifdef _MEASURE
+				i3 = __rdtscp(&ui3);
+				clock_t finish = clock();
+				d2 = (i3-i2)/(m_cost);
+				float mcycles = (float)(i3-i2)/(1<<20);
+				printf("Argon:  %d iterations %2.2f cpb %2.2f Mcycles\n", t_cost, (float)d2/1000,mcycles);
+				float run_time = ((float)finish-start)/(CLOCKS_PER_SEC);
+				printf("%2.4f seconds\n", run_time);
+				#endif
+	}
 	return 0;
 }
