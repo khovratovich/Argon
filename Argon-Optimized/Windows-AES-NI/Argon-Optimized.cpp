@@ -711,7 +711,7 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 		fprintf(fp,"%2.2x ",((unsigned char*)out)[i]);
 	fprintf(fp,"\n");
 	fclose(fp);
-#endif KAT
+#endif
 
 	delete state;
 	return 0;
