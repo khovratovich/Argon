@@ -1,27 +1,23 @@
 // Argon-Optimized.cpp
-// Optimized code for Windows x86/x64 architectures. Produced with Visual Studio 2010.
+// Optimized code for Windows x86/x64 architectures. Produced with Visual Studio 2013 Express.
 // Code written by Dmitry Khovratovich, khovratovich@gmail.com
-// Requires BOOST libraries for threading
+// Requires C++11
 //To fileprint intermediate variables, uncomment #define KAT
 //To enable measurement of SubGroups and ShuffleSlices, uncomment #define _MEASUREINT
 //To disable threading, comment #define THREADING
 
 //#define KAT
 #define _MEASURE
-//#define _MEASUREINT 
+#define _MEASUREINT 
 #define THREADING
 
 #include "stdio.h"
 
-#include "wmmintrin.h"
-#include <immintrin.h> 
-#include <emmintrin.h>
-#include <intrin.h> 
 #include <time.h>
-#ifdef THREADING
-	#include <boost/thread.hpp>
-#endif
-#include <string>
+#include <vector>
+#include <thread>
+#include <cstring>
+#include <cstdint>
 using namespace std;
 
 #define MAX_THREADS 32
@@ -36,14 +32,15 @@ using namespace std;
 #define MAX_SECRET 16
 #define INPUT_SIZE (INPUT_BLOCKS*12)
 #define INPUT_BLOCKS 32
-#define CACHE_SIZE 128
+#define CACHE_SIZE 16
+#define MAX_CACHE 128
 #define BATCH_SIZE 16   //should be not larger than 32
 #define GROUP_SIZE 32
 
 #define AES_ROUNDS 5
 
-#define u32 unsigned __int32
-#define u64 unsigned long long int
+#define u32 uint32_t
+#define u64 uint64_t
 
 
 
@@ -141,34 +138,62 @@ const static unsigned char sbox[256] =   {
 		0x8c, 0xa1, 0x89, 0x0d, 0xbf, 0xe6, 0x42, 0x68, 0x41, 0x99, 0x2d, 0x0f, 0xb0, 0x54, 0xbb, 0x16 };
 
 
-void ShuffleSlicesThr(__m128i* state, unsigned slice_length, unsigned slices)
+void ShuffleSlicesThr(__m128i* state, size_t slice_length, unsigned slices)
 {
 	for(unsigned s=0; s<slices; ++s) //Loop on slices
 	{
-		unsigned j=0;
-		for(unsigned i=0; i<slice_length; ++i)
+		size_t j = 0;
+		for(uint32_t i=0; i<slice_length; ++i)
 		{
-			unsigned index1 = s*(slice_length) + i; 
+			size_t index1 = s*(slice_length)+i;
 			__m128i v1 = state[index1];
 			j =(j+ v1.m128i_i32[0] )%slice_length;
-			unsigned index2 = s*(slice_length)+j;
+			size_t index2 = s*(slice_length)+j;
 			state[index1]=state[index2];
 			state[index2] = v1;
 		}
 	}
 }
 
-void ShuffleSlicesIntr(__m128i* state, unsigned width)
+
+void ShuffleSlicesThr2(__m128i* state, size_t slice_length, unsigned slices)
+{
+	for(unsigned s=0; s<slices; s+=2) //Loop on slices
+	{
+		size_t j[2];
+		j[0] = j[1] = 0;
+		size_t index1[2];
+		size_t index2[2];
+		__m128i v1[2];
+		for (size_t i = 0; i<slice_length; ++i)
+		{
+			index1[0] = s*(slice_length) + i; 
+			index1[1] = (s+1)*(slice_length) + i; 
+			v1[0] = state[index1[0]];
+			v1[1] = state[index1[1]];
+			j[0] =(j[0]+ v1[0].m128i_i32[0] )%slice_length;
+			j[1] =(j[1]+ v1[1].m128i_i32[0] )%slice_length;
+			index2[0] = s*(slice_length)+j[0];
+			index2[1] = (s+1)*(slice_length)+j[1];
+			state[index1[0]]=state[index2[0]];
+			state[index1[1]]=state[index2[1]];
+			state[index2[0]] = v1[0];
+			state[index2[1]] = v1[1];
+		}
+	}
+}
+
+void ShuffleSlicesIntr(__m128i* state, size_t width)
 {
 	for(unsigned s=0; s<GROUP_SIZE; ++s) //Loop on slices
 	{
-		unsigned j=0;
-		for(unsigned i=0; i<width/GROUP_SIZE; ++i)
+		size_t j=0;
+		for(uint32_t i=0; i<width/GROUP_SIZE; ++i)
 		{
-			unsigned index1 = s*(width/GROUP_SIZE) + i; 
+			size_t index1 = s*(width/GROUP_SIZE) + i; 
 			__m128i v1 = state[index1];
 			j =(j+ v1.m128i_i32[0] )%(width/GROUP_SIZE);
-			unsigned index2 = s*(width/GROUP_SIZE)+j;
+			size_t index2 = s*(width/GROUP_SIZE)+j;
 			state[index1]=state[index2];
 			state[index2] = v1;
 		}
@@ -200,15 +225,15 @@ inline void AES_reduced_batch_intr(__m128i* batch) //Encrypts BATCH_SIZE in para
 	
 }
 
-void SubGroupsIntr(__m128i* state, unsigned width)
+void SubGroupsIntr(__m128i* state, size_t width)
 {
-	__m128i groups[CACHE_SIZE][GROUP_SIZE];
+	__m128i groups[MAX_CACHE][GROUP_SIZE];
 	unsigned cached=0;
-	if(width < (32*GROUP_SIZE))
-		cached = width/GROUP_SIZE;
+	if(width < (CACHE_SIZE*GROUP_SIZE))
+		cached = (unsigned)width/GROUP_SIZE;
 	else
-		cached = 8;
-	for(unsigned i=0; i<width/GROUP_SIZE; i+=cached)
+		cached = CACHE_SIZE;
+	for(uint32_t i=0; i<width/GROUP_SIZE; i+=cached)
 	{
 		//Storing group inputs
 		for(unsigned l=0; l<GROUP_SIZE; ++l)
@@ -266,20 +291,20 @@ void SubGroupsIntr(__m128i* state, unsigned width)
 }
 
 
-void SubGroupsThr(__m128i* state, unsigned group_n, unsigned distance) //elements of the group are 'distance' blocks from each other in memory
+void SubGroupsThr(__m128i* state, size_t group_n, size_t distance) //elements of the group are 'distance' blocks from each other in memory
 {
 
-	__m128i groups[CACHE_SIZE][GROUP_SIZE];
-	unsigned cached=0;
-	cached = (group_n<8)?group_n:8;
-	for(unsigned i=0; i<group_n; i+=cached)
+	__m128i groups[MAX_CACHE][GROUP_SIZE];
+	size_t cached=0;
+	cached = (group_n<CACHE_SIZE) ? group_n : CACHE_SIZE;
+	for (size_t i = 0; i<group_n; i += cached)
 	{
 		//Storing group inputs
-		if((group_n-i)<cached)
-			cached = group_n-i;
+		if(group_n< cached+i)
+			cached = (group_n-i);
 		for(unsigned l=0; l<GROUP_SIZE; ++l)
 		{
-			for(unsigned j=0; j<cached; ++j)
+			for (size_t j = 0; j<cached; ++j)
 			{
 				groups[j][l]= state[i+j+l*distance];
 			}
@@ -333,15 +358,15 @@ void SubGroupsThr(__m128i* state, unsigned group_n, unsigned distance) //element
 	}
 }
 
-void InitialRound(__m128i* state, unsigned state_size)
+void InitialRound(__m128i* state, size_t state_size)
 {
-	for(unsigned i=0; i<state_size; i+=BATCH_SIZE)
+	for(uint32_t i=0; i<state_size; i+=BATCH_SIZE)
 	{
 		AES_reduced_batch_intr(state+i);
 	}
 }
 
-int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const void *salt, size_t saltlen, const void *secret, size_t secretlen, unsigned int t_cost, unsigned int m_cost,unsigned int threads=2)
+int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const void *salt, size_t saltlen, const void *secret, size_t secretlen, uint32_t t_cost, size_t m_cost,uint32_t thread_n=2)
 {
 	__m128i* state;
 #ifdef KAT
@@ -351,8 +376,8 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 	fprintf(fp,"OPTIMIZED:\nT_cost: %d, Memory: %d KBytes\n", t_cost, m_cost);
 #endif
 	#ifdef _MEASUREINT
-	unsigned __int64 i1,i2,i3,i4,i5,i6,i7,d1,d2;
-	unsigned int ui1,ui2,ui3,ui4,ui5,ui6,ui7;
+	uint64_t  i1,i2,i3,i4,i5,i6,d1,d2;
+	uint32_t ui1,ui2,ui3,ui4,ui6;
 	i1 = __rdtscp(&ui1);
 #endif
 	//Computing parameters
@@ -374,10 +399,12 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 		inlen = MAX_PASSWORD;
 	if(saltlen> MAX_SALT)
 		saltlen = MAX_SALT;
-	if(threads ==0)
-		threads =1;
-	if(threads > MAX_THREADS)
-		threads = MAX_THREADS;
+	if (secretlen> MAX_SECRET)
+		secretlen = MAX_SECRET;
+	if(thread_n ==0)
+		thread_n =1;
+	if(thread_n > MAX_THREADS)
+		thread_n = MAX_THREADS;
 #ifdef KAT
 	fprintf(fp,"Password: ");
 	for(unsigned i=0; i<inlen; ++i)
@@ -440,7 +467,7 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 		Input[i+6*LENGTH_SIZE+inlen+saltlen+i] =((unsigned char*)secret)[i];
 	}
 	//1.10 Padding
-	for(unsigned i=6*LENGTH_SIZE+inlen+saltlen+secretlen; i<INPUT_SIZE; ++i)
+	for(unsigned i=6*LENGTH_SIZE+(unsigned)(inlen+saltlen+secretlen); i<INPUT_SIZE; ++i)
 		Input[i] = 0;
 #ifdef KAT
 	fprintf(fp,"Input string:\n");
@@ -456,7 +483,7 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 
 
 	//2. Filling blocks
-	unsigned state_size = m_cost*64;
+	size_t state_size = m_cost*64;
 #ifdef _MEASUREINT
 			i3 = __rdtscp(&ui3);
 			d1 = (i3-i1)/(state_size);
@@ -465,21 +492,21 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 	state = new __m128i[state_size];
 	if(state==NULL)
 		return 1;
-	printf("Memory allocated: %d KBytes\n %d threads\n",state_size*sizeof(int128)/(1<<10),threads);
+	printf("Memory allocated: %lu KBytes\n %d thread_n\n",(state_size*sizeof(int128)/(1<<10)),thread_n);
 
-	unsigned width = state_size/GROUP_SIZE;
+	size_t width = state_size/GROUP_SIZE;
 	
 	for(unsigned i=0; i<GROUP_SIZE; ++i)
 	{
 		__m128i tmp;
-		unsigned start=width*i;
+		size_t start=width*i;
 		tmp.m128i_u64[0] = tmp.m128i_u64[1] = 0;
 		for(unsigned j=0; j<8; ++j)
 			tmp.m128i_u64[0] ^= ((u64)Input[12*i+j])<<(8*j);
 		for(unsigned j=0; j<4; ++j)
 			tmp.m128i_u64[1]^= ((u64)Input[12*i+8+j])<<(8*j);
 		tmp.m128i_u64[1] ^= ((u64)i)<<(32);
-		for(unsigned l=0; l<width; l++)
+		for(uint32_t l=0; l<width; l++)
 		{
 			state[start+l] = tmp;
 			tmp.m128i_u64[1] += ((u64)GROUP_SIZE)<<(32);
@@ -494,7 +521,7 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 #endif
 #ifdef KAT
 	fprintf(fp,"Blocks:\n");
-	for(unsigned i=0; i<state_size; ++i)
+	for(uint32_t i=0; i<state_size; ++i)
 	{
 		fprintf(fp,"Block %3.3d: H: %.16llx L: %.16llx",i,state[i].m128i_u64[1],state[i].m128i_u64[0]);
 		fprintf(fp,"\n");
@@ -505,16 +532,17 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 
 	//3. Initial transformation
 #ifdef THREADING
-	boost::thread_group Threads;
+	vector<thread> Threads;
 
-	unsigned step = state_size/threads;//Area size of each thread. Must be divisible by BATCH_SIZE
+	size_t step = state_size/thread_n;//Area size of each thread. Must be divisible by BATCH_SIZE
 	step = (step/BATCH_SIZE)*BATCH_SIZE;
-	for(unsigned i=0; i<threads-1; ++i)
-		Threads.add_thread(new boost::thread(InitialRound,state+i*step, step));
+	for(unsigned i=0; i<thread_n-1; ++i)
+		Threads.push_back(thread(InitialRound,state+i*step, step));
 	//Last thread with posssibly larger area
-	Threads.add_thread(new boost::thread(InitialRound,state+(threads-1)*step, state_size-(threads-1)*step));
-
-	Threads.join_all();
+	Threads.push_back(thread(InitialRound, state + (thread_n - 1)*step, state_size - (thread_n - 1)*step));
+	for (auto& th: Threads)
+		th.join();
+	Threads.clear();
 #else
 	InitialRound(state,state_size);
 #endif
@@ -526,7 +554,7 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 #endif
 #ifdef KAT
 	fprintf(fp,"Initial transformation:\nBlocks:\n");
-	for(unsigned i=0; i<state_size; ++i)
+	for(uint32_t i=0; i<state_size; ++i)
 	{
 		fprintf(fp,"Block %3.3d: H: %.16llx L: %.16llx",i,state[i].m128i_u64[1],state[i].m128i_u64[0]);
 		fprintf(fp,"\n");
@@ -540,13 +568,15 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 	{
 #ifdef THREADING
 		//Each thread processes a certain number of groups
-		unsigned distance = state_size/GROUP_SIZE;
-		unsigned groups_per_thread = distance/(threads);//Area size of each thread.
-		for(unsigned i=0; i<threads-1; ++i)
-			Threads.add_thread(new boost::thread(SubGroupsThr,state+i*groups_per_thread,groups_per_thread, distance));
+		size_t distance = state_size/GROUP_SIZE;
+		size_t groups_per_thread = distance/(thread_n);//Area size of each thread.
+		for(unsigned i=0; i<thread_n-1; ++i)
+			Threads.push_back(thread(SubGroupsThr,state+i*groups_per_thread,groups_per_thread, distance));
 		//Last thread with possibly larger area
-		Threads.add_thread(new boost::thread(SubGroupsThr,state+(threads-1)*groups_per_thread, distance-(threads-1)*groups_per_thread,distance));
-		Threads.join_all();
+		Threads.push_back(thread(SubGroupsThr, state + (thread_n - 1)*groups_per_thread, distance - (thread_n - 1)*groups_per_thread, distance));
+		for (auto& th : Threads)
+			th.join();
+		Threads.clear();
 #else
 		SubGroupsIntr(state,state_size);
 #endif
@@ -557,7 +587,7 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 #endif
 #ifdef KAT
 	fprintf(fp,"Round %d SubGroups:\nBlocks:\n",l+1);
-	for(unsigned i=0; i<state_size; ++i)
+	for(uint32_t i=0; i<state_size; ++i)
 	{
 		fprintf(fp,"Block %3.3d: H: %.16llx L: %.16llx",i,state[i].m128i_u64[1],state[i].m128i_u64[0]);
 		fprintf(fp,"\n");
@@ -566,14 +596,16 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 		
 #endif
 #ifdef THREADING
-	unsigned slices_per_thread = GROUP_SIZE/threads;//Area size of each thread.
-	unsigned slice_length = state_size/GROUP_SIZE;
-	for(unsigned i=0; i<threads-1; ++i)
-			Threads.add_thread(new boost::thread(ShuffleSlicesThr,state+i*slices_per_thread*slice_length,slice_length, slices_per_thread));
+	unsigned slices_per_thread = GROUP_SIZE/thread_n;//Area size of each thread.
+	size_t slice_length = state_size / GROUP_SIZE;
+	for(unsigned i=0; i<thread_n-1; ++i)
+			Threads.push_back(thread(ShuffleSlicesThr,state+i*slices_per_thread*slice_length,slice_length, slices_per_thread));
 	//Last thread
-	Threads.add_thread(new boost::thread(ShuffleSlicesThr,state+(threads-1)*slices_per_thread*slice_length, slice_length,GROUP_SIZE-(threads-1)*slices_per_thread));
+	Threads.push_back(thread(ShuffleSlicesThr, state + (thread_n - 1)*slices_per_thread*slice_length, slice_length, GROUP_SIZE - (thread_n - 1)*slices_per_thread));
 	//Wrapping up
-	Threads.join_all();
+	for (auto& th : Threads)
+		th.join();
+	Threads.clear();
 
 #else
 		ShuffleSlicesIntr(state,state_size);
@@ -585,7 +617,7 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 #endif
 			#ifdef KAT
 	fprintf(fp,"ShuffleSlices:\nBlocks:\n");
-	for(unsigned i=0; i<state_size; ++i)
+	for(uint32_t i=0; i<state_size; ++i)
 	{
 		fprintf(fp,"Block %3.3d: H: %.16llx L: %.16llx",i,state[i].m128i_u64[1],state[i].m128i_u64[0]);
 		fprintf(fp,"\n");
@@ -598,20 +630,21 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 	//5.Finalization
 #ifdef THREADING
 		//Each thread processes a certain number of groups
-		unsigned distance = state_size/GROUP_SIZE;
-		unsigned groups_per_thread = distance/(threads);//Area size of each thread.
-		for(unsigned i=0; i<threads-1; ++i)
-			Threads.add_thread(new boost::thread(SubGroupsThr,state+i*groups_per_thread,groups_per_thread, distance));
+		size_t distance = state_size / GROUP_SIZE;
+		size_t groups_per_thread = distance/(thread_n);//Area size of each thread.
+		for(unsigned i=0; i<thread_n-1; ++i)
+			Threads.push_back(thread(SubGroupsThr,state+i*groups_per_thread,groups_per_thread, distance));
 		//Last thread with posssibly larger area
-		Threads.add_thread(new boost::thread(SubGroupsThr,state+(threads-1)*groups_per_thread, distance-(threads-1)*groups_per_thread,distance));
-
-		Threads.join_all();
+		Threads.push_back(thread(SubGroupsThr, state + (thread_n - 1)*groups_per_thread, distance - (thread_n - 1)*groups_per_thread, distance));
+		for (auto& th : Threads)
+			th.join();
+		Threads.clear();
 #else
 		SubGroupsIntr(state,state_size);
 #endif
 #ifdef KAT
 	fprintf(fp,"Last round: SubGroups:\nBlocks:\n");
-	for(unsigned i=0; i<state_size; ++i)
+	for(uint32_t i=0; i<state_size; ++i)
 	{
 		fprintf(fp,"Block %3.3d: H: %.16llx L: %.16llx",i,state[i].m128i_u64[1],state[i].m128i_u64[0]);
 		fprintf(fp,"\n");
@@ -626,7 +659,7 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 	a1_intr.m128i_u64[0] = a1_intr.m128i_u64[1] = 0;
 	__m128i a2_intr;
 	a2_intr.m128i_u64[0] = a2_intr.m128i_u64[1] = 0;
-	for(unsigned i=0; i< state_size; ++i)
+	for(uint32_t i=0; i< state_size; ++i)
 	{
 		if(i%(state_size/32)<state_size/64)   //First w/64 of each slice of size w/32
 			a1_intr = _mm_xor_si128(a1_intr, state[i]);
@@ -686,9 +719,9 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 
 
 int PHS(void *out, size_t outlen, const void *in, size_t inlen, const void *salt, size_t saltlen, 
-	unsigned int t_cost, unsigned int m_cost,unsigned int threads=1)
+	uint32_t t_cost, size_t m_cost, uint32_t thread_n=1)
 {
-	return ArgonFast64(out, outlen, in, inlen, salt, saltlen, NULL, 0, t_cost, m_cost, threads);
+	return ArgonFast64(out, outlen, in, inlen, salt, saltlen, NULL, 0, t_cost, m_cost, thread_n);
 }
 
 void GenKat(unsigned outlen)
@@ -706,8 +739,8 @@ void GenKat(unsigned outlen)
 		for(unsigned s_len=16; s_len<=16; s_len+=8)
 		{
 #ifdef _MEASURE
-			unsigned __int64 i1,i2,i3,d1,d2;
-			unsigned int ui1,ui2,ui3;
+			uint64_t  i2,i3,d2;
+			uint32_t ui2,ui3;
 #endif
 	
 
@@ -743,14 +776,13 @@ int main(int argc, char* argv[])
 {	
 	unsigned char out[32];
 	int i=0;
-	unsigned outlen=32;
-	unsigned m_cost=1<<18;
-	unsigned t_cost=3;
-	unsigned p_len = 16;
-	unsigned threads =4;
-	unsigned s_len=16;
+	size_t outlen = 32;
+	size_t m_cost=1<<18;
+	uint32_t t_cost=3;
+	size_t p_len = 16;
+	unsigned thread_n =4;
+	size_t s_len = 16;
 
-	GenKat(32);
 	if(argc==1)
 	{
 		printf("-taglength <Tag Length 0..31> -logmcost <Base 2 logarithm of m_cost 0..23> -tcost <t_cost 0..2^24> -pwdlen <Password length> -saltlen <Salt Length> -threads <Number of threads 0..31>\n");
@@ -775,7 +807,7 @@ int main(int argc, char* argv[])
 				 if(i<argc-1)
 				 {
 					 i++;
-					 m_cost = 1<<(atoi(argv[i])%24);
+					 m_cost = (size_t)1<<(atoi(argv[i])%24);
 					 continue;
 				 }
 			 }
@@ -811,18 +843,18 @@ int main(int argc, char* argv[])
 				 if(i<argc-1)
 				 {
 					 i++;
-					 threads = atoi(argv[i])%32;
+					 thread_n = atoi(argv[i])%32;
 					 continue;
 				 }
 			 }
 		 }
 		 #ifdef _MEASURE
-		 unsigned __int64 i1,i2,i3,d1,d2;
-				unsigned int ui1,ui2,ui3;
+		 uint64_t  i2,i3,d2;
+				uint32_t ui2,ui3;
 				clock_t start = clock();
 				i2 = __rdtscp(&ui2);
 	#endif
-		PHS(out,outlen,sbox,p_len,subkeys[5],s_len,t_cost,m_cost,threads);
+		PHS(out,outlen,sbox,p_len,subkeys[5],s_len,t_cost,m_cost,thread_n);
 
 		#ifdef _MEASURE
 				i3 = __rdtscp(&ui3);
