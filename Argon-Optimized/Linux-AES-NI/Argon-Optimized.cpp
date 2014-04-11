@@ -1,6 +1,6 @@
 // Argon-Optimized.cpp
-// Optimized code for Linux x86/x64 architectures. Produced with gcc-4.7.3
-// Code written by Dmitry Khovratovich, khovratovich@gmail.com
+// Optimized code for Windows x86/x64 architectures. Produced with Visual Studio 2013 Express
+// Code written by Dmitry Khovratovich, khovratovich@gmail.com, and Yann Le Corre
 // Requires C++11
 //To fileprint intermediate variables, uncomment #define KAT
 //To enable measurement of SubGroups and ShuffleSlices, uncomment #define _MEASUREINT
@@ -9,7 +9,7 @@
 //#define KAT
 //#define KAT_INTERNAL
 #define _MEASURE
-#define _MEASUREINT 
+//#define _MEASUREINT 
 #define THREADING
 
 #include "stdio.h"
@@ -507,7 +507,7 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 	state = new __m128i[state_size];
 	if(state==NULL)
 		return 1;
-	printf("Memory allocated: %lu KBytes\n %d thread_n\n",(state_size*sizeof(int128)/(1<<10)),thread_n);
+	printf("Memory allocated: %lu MBytes, %d threads\n",(state_size*sizeof(int128)/(1<<20)),thread_n);
 
 	size_t width = state_size/GROUP_SIZE;
 	
@@ -770,6 +770,66 @@ void GenKat(unsigned outlen)
 	}
 }
 
+void Benchmark()  //Benchmarks Argon with salt length 16, password length 128, tcost 3, and different threads and mcost
+{
+	unsigned char out[32];
+	int i = 0;
+	size_t outlen = 16;
+	uint32_t t_cost = 3;
+	size_t inlen = 128;
+	size_t saltlen = 16;
+
+	for (size_t m_cost = (size_t)1 << 10; m_cost <= (size_t)1 << 22; m_cost*=2)
+	{
+		for (uint32_t thread_n = 1; thread_n <= 16; thread_n++)
+		{
+
+#ifdef _MEASURE
+			uint64_t  i2, i3, d2;
+			uint32_t ui2, ui3;
+			clock_t start = clock();
+			i2 = __rdtscp(&ui2);
+#endif
+
+			ArgonFast64(out, outlen, sbox, inlen, subkeys[5], saltlen, NULL, 0, t_cost, m_cost, thread_n);
+
+#ifdef _MEASURE
+			i3 = __rdtscp(&ui3);
+			clock_t finish = clock();
+			d2 = (i3 - i2) / (m_cost);
+			float mcycles = (float)(i3 - i2) / (1 << 20);
+			printf("Argon:  %2.2f cpb %2.2f Mcycles ", (float)d2 / 1000, mcycles);
+			float run_time = ((float)finish - start) / (CLOCKS_PER_SEC);
+			printf("%2.4f seconds\n\n", run_time);
+#endif
+		}
+	}
+}
+
+void Run(void *out, size_t outlen, size_t inlen, size_t saltlen,
+	uint32_t t_cost, size_t m_cost, uint32_t thread_n)
+{
+	#ifdef _MEASURE
+		uint64_t  i2, i3, d2;
+		uint32_t ui2, ui3;
+		clock_t start = clock();
+		i2 = __rdtscp(&ui2);
+	#endif
+
+		PHS(out, outlen, sbox, inlen, subkeys[5], saltlen, t_cost, m_cost, thread_n);
+
+	#ifdef _MEASURE
+		i3 = __rdtscp(&ui3);
+		clock_t finish = clock();
+		d2 = (i3 - i2) / (m_cost);
+		float mcycles = (float)(i3 - i2) / (1 << 20);
+		printf("Argon:  %2.2f cpb %2.2f Mcycles ", (float)d2 / 1000, mcycles);
+		float run_time = ((float)finish - start) / (CLOCKS_PER_SEC);
+		printf("%2.4f seconds\n", run_time);
+	#endif
+
+}
+
 int main(int argc, char* argv[])
 {	
 	unsigned char out[32];
@@ -845,25 +905,13 @@ int main(int argc, char* argv[])
 					 continue;
 				 }
 			 }
-		 }
-		 #ifdef _MEASURE
-		uint64_t  i2,i3,d2;
-		uint32_t ui2,ui3;
-		clock_t start = clock();
-		i2 = __rdtscp(&ui2);
-		#endif
-
-		PHS(out,outlen,sbox,p_len,subkeys[5],s_len,t_cost,m_cost,thread_n);
-
-		#ifdef _MEASURE
-		i3 = __rdtscp(&ui3);
-		clock_t finish = clock();
-		d2 = (i3-i2)/(m_cost);
-		float mcycles = (float)(i3-i2)/(1<<20);
-		printf("Argon:  %d iterations %2.2f cpb %2.2f Mcycles\n", t_cost, (float)d2/1000,mcycles);
-		float run_time = ((float)finish-start)/(CLOCKS_PER_SEC);
-		printf("%2.4f seconds\n", run_time);
-		#endif
-	}
+			 if (strcmp(argv[i], "-benchmark") == 0)
+			 {
+				 Benchmark();
+				 return 0;
+			 }
+		 }//end of for
+	Run(out, outlen, p_len, s_len, t_cost, m_cost, thread_n);
+	}//end of else
 	return 0;
 }
