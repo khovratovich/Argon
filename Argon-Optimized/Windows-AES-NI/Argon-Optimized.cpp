@@ -1,12 +1,13 @@
 // Argon-Optimized.cpp
-// Optimized code for Windows x86/x64 architectures. Produced with Visual Studio 2013 Express.
-// Code written by Dmitry Khovratovich, khovratovich@gmail.com
+// Optimized code for Windows x86/x64 architectures. Produced with Visual Studio 2013 Express
+// Code written by Dmitry Khovratovich, khovratovich@gmail.com, and Yann Le Corre
 // Requires C++11
 //To fileprint intermediate variables, uncomment #define KAT
 //To enable measurement of SubGroups and ShuffleSlices, uncomment #define _MEASUREINT
 //To disable threading, comment #define THREADING
 
 //#define KAT
+//#define KAT_INTERNAL
 #define _MEASURE
 #define _MEASUREINT 
 #define THREADING
@@ -39,9 +40,9 @@ using namespace std;
 
 #define AES_ROUNDS 5
 
-#define u32 uint32_t
-#define u64 uint64_t
-
+#ifdef __GNUG__
+	#include <x86intrin.h>
+#endif
 
 
 
@@ -58,7 +59,7 @@ unsigned char subkeys[11][16]={
 {0x54, 0x99, 0x32, 0xd1, 0xf0, 0x85, 0x57, 0x68, 0x10, 0x93, 0xed, 0x9c, 0xbe, 0x2c, 0x97, 0x4e, },
 	{0x13, 0x11, 0x1d, 0x7f, 0xe3, 0x94, 0x4a, 0x17, 0xf3, 0x07, 0xa7, 0x8b, 0x4d, 0x2b, 0x30, 0xc5, }};
 
-u64 subkeys64[11][2]=
+uint64_t subkeys64[11][2]=
 	{{0x0706050403020100, 0x0f0e0d0c0b0a0908},
 {0xfa72afd2fd74aad6, 0xfe76abd6f178a6da},
 {0xf1bd3d640bcf92b6, 0xfeb3306800c59bbe},
@@ -71,9 +72,19 @@ u64 subkeys64[11][2]=
 {0x685785f0d1329954, 0x4e972cbe9ced9310},
 {0x174a94e37f1d1113, 0xc5302b4d8ba707f3}};
 
+void dumpState(FILE *fp, __m128i *state, size_t state_size)
+{
+	for(size_t i = 0; i < state_size; ++i)
+	{
+		uint64_t u0 = (uint64_t)_mm_extract_epi64(state[i], 0);
+		uint64_t u1 = (uint64_t)_mm_extract_epi64(state[i], 1);
+		fprintf(fp,"Block %3.3lu: H: %.16lx L: %.16lx\n", i, u1, u0);
+	}
+}
+
 struct int128{
-	u64 i0,i1;
-	int128(u64 y0=0, u64 y1=0){i0 = y0; i1 = y1;};
+	uint64_t i0,i1;
+	int128(uint64_t y0=0, uint64_t y1=0){i0 = y0; i1 = y1;};
 	int128& operator^=(const int128 &r){ i0 ^= r.i0; i1 ^=r.i1; return *this;}
 	int128& operator=(const int128 &r){ i0 = r.i0; i1 =r.i1; return *this;}
 	unsigned char operator[](unsigned i)
@@ -109,8 +120,8 @@ inline void AES_reduced_opt(int128 &u)
 		}
 	}
 	{	
-		u.i0 = acc0.m128i_u64[0];
-		u.i1 = acc0.m128i_u64[1];
+		u.i0 = _mm_extract_epi64(acc0, 0);
+		u.i1 = _mm_extract_epi64(acc0, 1);
 	}
 }
 
@@ -147,7 +158,8 @@ void ShuffleSlicesThr(__m128i* state, size_t slice_length, unsigned slices)
 		{
 			size_t index1 = s*(slice_length)+i;
 			__m128i v1 = state[index1];
-			j =(j+ v1.m128i_i32[0] )%slice_length;
+			int32_t q = _mm_extract_epi32(v1, 0);
+			j = (j+ q) % slice_length;
 			size_t index2 = s*(slice_length)+j;
 			state[index1]=state[index2];
 			state[index2] = v1;
@@ -165,14 +177,17 @@ void ShuffleSlicesThr2(__m128i* state, size_t slice_length, unsigned slices)
 		size_t index1[2];
 		size_t index2[2];
 		__m128i v1[2];
+		int32_t tmp;
 		for (size_t i = 0; i<slice_length; ++i)
 		{
 			index1[0] = s*(slice_length) + i; 
 			index1[1] = (s+1)*(slice_length) + i; 
 			v1[0] = state[index1[0]];
 			v1[1] = state[index1[1]];
-			j[0] =(j[0]+ v1[0].m128i_i32[0] )%slice_length;
-			j[1] =(j[1]+ v1[1].m128i_i32[0] )%slice_length;
+			tmp = _mm_extract_epi32(v1[0], 0);
+			j[0] = (j[0]+ tmp) % slice_length;
+			tmp = _mm_extract_epi32(v1[1], 0);
+			j[1] = (j[1]+ tmp) % slice_length;
 			index2[0] = s*(slice_length)+j[0];
 			index2[1] = (s+1)*(slice_length)+j[1];
 			state[index1[0]]=state[index2[0]];
@@ -192,7 +207,8 @@ void ShuffleSlicesIntr(__m128i* state, size_t width)
 		{
 			size_t index1 = s*(width/GROUP_SIZE) + i; 
 			__m128i v1 = state[index1];
-			j =(j+ v1.m128i_i32[0] )%(width/GROUP_SIZE);
+			int32_t q = _mm_extract_epi32(v1, 0);
+			j = (j+ q) % (width/GROUP_SIZE);
 			size_t index2 = s*(width/GROUP_SIZE)+j;
 			state[index1]=state[index2];
 			state[index2] = v1;
@@ -371,9 +387,8 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 	__m128i* state;
 #ifdef KAT
 	FILE* fp=fopen("kat-opt.log","a+");
-
 	
-	fprintf(fp,"OPTIMIZED:\nT_cost: %d, Memory: %d KBytes\n", t_cost, m_cost);
+	fprintf(fp,"OPTIMIZED:\nT_cost: %u, Memory: %lu KBytes\n", t_cost, m_cost);
 #endif
 	#ifdef _MEASUREINT
 	uint64_t  i1,i2,i3,i4,i5,i6,d1,d2;
@@ -469,7 +484,7 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 	//1.10 Padding
 	for(unsigned i=6*LENGTH_SIZE+(unsigned)(inlen+saltlen+secretlen); i<INPUT_SIZE; ++i)
 		Input[i] = 0;
-#ifdef KAT
+#if defined(KAT) && defined(KAT_INTERNAL)
 	fprintf(fp,"Input string:\n");
 	for(unsigned i=0; i<INPUT_SIZE; ++i)
 	{
@@ -498,18 +513,31 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 	
 	for(unsigned i=0; i<GROUP_SIZE; ++i)
 	{
+		/* All those could be optimized a lot using movd* instructions */
 		__m128i tmp;
 		size_t start=width*i;
-		tmp.m128i_u64[0] = tmp.m128i_u64[1] = 0;
-		for(unsigned j=0; j<8; ++j)
-			tmp.m128i_u64[0] ^= ((u64)Input[12*i+j])<<(8*j);
-		for(unsigned j=0; j<4; ++j)
-			tmp.m128i_u64[1]^= ((u64)Input[12*i+8+j])<<(8*j);
-		tmp.m128i_u64[1] ^= ((u64)i)<<(32);
+		tmp = _mm_xor_si128(tmp, tmp);
+
+		tmp = _mm_insert_epi8(tmp, (int)Input[12*i +  0],  0);
+		tmp = _mm_insert_epi8(tmp, (int)Input[12*i +  1],  1);
+		tmp = _mm_insert_epi8(tmp, (int)Input[12*i +  2],  2);
+		tmp = _mm_insert_epi8(tmp, (int)Input[12*i +  3],  3);
+		tmp = _mm_insert_epi8(tmp, (int)Input[12*i +  4],  4);
+		tmp = _mm_insert_epi8(tmp, (int)Input[12*i +  5],  5);
+		tmp = _mm_insert_epi8(tmp, (int)Input[12*i +  6],  6);
+		tmp = _mm_insert_epi8(tmp, (int)Input[12*i +  7],  7);
+		tmp = _mm_insert_epi8(tmp, (int)Input[12*i +  8],  8);
+		tmp = _mm_insert_epi8(tmp, (int)Input[12*i +  9],  9);
+		tmp = _mm_insert_epi8(tmp, (int)Input[12*i + 10], 10);
+		tmp = _mm_insert_epi8(tmp, (int)Input[12*i + 11], 11);
+		tmp = _mm_insert_epi32(tmp, (int64_t)i, 3);
+
 		for(uint32_t l=0; l<width; l++)
 		{
 			state[start+l] = tmp;
-			tmp.m128i_u64[1] += ((u64)GROUP_SIZE)<<(32);
+			uint32_t c = (uint32_t)_mm_extract_epi32(tmp, 3);
+			c += GROUP_SIZE;
+			tmp = _mm_insert_epi32(tmp, c, 3);
 		}
 	}
 
@@ -519,15 +547,9 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 			d1 = (i2-i3)/(state_size);
 			printf("Filling phase %2.2f cpb\n", (float)d1/(16));
 #endif
-#ifdef KAT
+#if defined(KAT) && defined(KAT_INTERNAL)
 	fprintf(fp,"Blocks:\n");
-	for(uint32_t i=0; i<state_size; ++i)
-	{
-		fprintf(fp,"Block %3.3d: H: %.16llx L: %.16llx",i,state[i].m128i_u64[1],state[i].m128i_u64[0]);
-		fprintf(fp,"\n");
-	}
-	fprintf(fp,"\n");
-		
+	dumpState(fp, state, state_size);
 #endif
 
 	//3. Initial transformation
@@ -552,15 +574,9 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 			d1 = (i4-i2)/(state_size);
 			printf("Initial phase %2.2f cpb\n", (float)d1/(16));
 #endif
-#ifdef KAT
+#if defined(KAT) && defined(KAT_INTERNAL)
 	fprintf(fp,"Initial transformation:\nBlocks:\n");
-	for(uint32_t i=0; i<state_size; ++i)
-	{
-		fprintf(fp,"Block %3.3d: H: %.16llx L: %.16llx",i,state[i].m128i_u64[1],state[i].m128i_u64[0]);
-		fprintf(fp,"\n");
-	}
-	fprintf(fp,"\n");
-		
+	dumpState(fp, state, state_size);
 #endif
 
 	//4. Rounds: 
@@ -585,15 +601,9 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 			d1 = (i5-i4)/(state_size);
 			printf("SubGroups %2.2f cpb\n", (float)d1/(16));
 #endif
-#ifdef KAT
+#if defined(KAT) && defined(KAT_INTERNAL)
 	fprintf(fp,"Round %d SubGroups:\nBlocks:\n",l+1);
-	for(uint32_t i=0; i<state_size; ++i)
-	{
-		fprintf(fp,"Block %3.3d: H: %.16llx L: %.16llx",i,state[i].m128i_u64[1],state[i].m128i_u64[0]);
-		fprintf(fp,"\n");
-	}
-	fprintf(fp,"\n");
-		
+	dumpState(fp, state, state_size);
 #endif
 #ifdef THREADING
 	unsigned slices_per_thread = GROUP_SIZE/thread_n;//Area size of each thread.
@@ -615,15 +625,9 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 			d1 = (i4-i5)/(state_size);
 			printf("ShuffleSlices %2.2f cpb\n", (float)d1/(16));
 #endif
-			#ifdef KAT
+#if defined(KAT) && defined(KAT_INTERNAL)
 	fprintf(fp,"ShuffleSlices:\nBlocks:\n");
-	for(uint32_t i=0; i<state_size; ++i)
-	{
-		fprintf(fp,"Block %3.3d: H: %.16llx L: %.16llx",i,state[i].m128i_u64[1],state[i].m128i_u64[0]);
-		fprintf(fp,"\n");
-	}
-	fprintf(fp,"\n");
-		
+	dumpState(fp, state, state_size);
 #endif
 	}
 
@@ -642,23 +646,17 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 #else
 		SubGroupsIntr(state,state_size);
 #endif
-#ifdef KAT
+#if defined(KAT) && defined(KAT_INTERNAL)
 	fprintf(fp,"Last round: SubGroups:\nBlocks:\n");
-	for(uint32_t i=0; i<state_size; ++i)
-	{
-		fprintf(fp,"Block %3.3d: H: %.16llx L: %.16llx",i,state[i].m128i_u64[1],state[i].m128i_u64[0]);
-		fprintf(fp,"\n");
-	}
-	fprintf(fp,"\n");
-		
+	dumpState(fp, state, state_size);
 #endif
 		#ifdef _MEASUREINT
 			i5 = __rdtscp(&ui4);
 #endif
 	__m128i a1_intr;
-	a1_intr.m128i_u64[0] = a1_intr.m128i_u64[1] = 0;
+	a1_intr = _mm_xor_si128(a1_intr,a1_intr);
 	__m128i a2_intr;
-	a2_intr.m128i_u64[0] = a2_intr.m128i_u64[1] = 0;
+	a2_intr = _mm_xor_si128(a2_intr,a2_intr);
 	for(uint32_t i=0; i< state_size; ++i)
 	{
 		if(i%(state_size/32)<state_size/64)   //First w/64 of each slice of size w/32
@@ -666,8 +664,8 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 		else 
 			a2_intr = _mm_xor_si128(a2_intr, state[i]);
 	}
-	int128 a1(a1_intr.m128i_u64[0],a1_intr.m128i_u64[1]);
-	int128 a2(a2_intr.m128i_u64[0],a2_intr.m128i_u64[1]);
+	int128 a1(_mm_extract_epi64(a1_intr, 0), _mm_extract_epi64(a1_intr, 1));
+	int128 a2(_mm_extract_epi64(a2_intr, 0), _mm_extract_epi64(a2_intr, 1));
 	if(outlen<=16)
 	{
 		int128 tag = a1^a2;
@@ -731,12 +729,12 @@ void GenKat(unsigned outlen)
 	memset(zero_array,0,256);
 	unsigned t_cost = 3;
 	unsigned m_cost = 2;
-#ifdef _KAT
+#ifdef KAT
 	remove("kat-opt.log");
 #endif
-	for(unsigned p_len=0; p_len<=256; p_len+=64)
+	for(unsigned p_len=0; p_len<=256; p_len+=32)
 	{
-		for(unsigned s_len=16; s_len<=16; s_len+=8)
+		for(unsigned s_len=8; s_len<=32; s_len+=8)
 		{
 #ifdef _MEASURE
 			uint64_t  i2,i3,d2;
@@ -849,22 +847,23 @@ int main(int argc, char* argv[])
 			 }
 		 }
 		 #ifdef _MEASURE
-		 uint64_t  i2,i3,d2;
-				uint32_t ui2,ui3;
-				clock_t start = clock();
-				i2 = __rdtscp(&ui2);
-	#endif
+		uint64_t  i2,i3,d2;
+		uint32_t ui2,ui3;
+		clock_t start = clock();
+		i2 = __rdtscp(&ui2);
+		#endif
+
 		PHS(out,outlen,sbox,p_len,subkeys[5],s_len,t_cost,m_cost,thread_n);
 
 		#ifdef _MEASURE
-				i3 = __rdtscp(&ui3);
-				clock_t finish = clock();
-				d2 = (i3-i2)/(m_cost);
-				float mcycles = (float)(i3-i2)/(1<<20);
-				printf("Argon:  %d iterations %2.2f cpb %2.2f Mcycles\n", t_cost, (float)d2/1000,mcycles);
-				float run_time = ((float)finish-start)/(CLOCKS_PER_SEC);
-				printf("%2.4f seconds\n", run_time);
-				#endif
+		i3 = __rdtscp(&ui3);
+		clock_t finish = clock();
+		d2 = (i3-i2)/(m_cost);
+		float mcycles = (float)(i3-i2)/(1<<20);
+		printf("Argon:  %d iterations %2.2f cpb %2.2f Mcycles\n", t_cost, (float)d2/1000,mcycles);
+		float run_time = ((float)finish-start)/(CLOCKS_PER_SEC);
+		printf("%2.4f seconds\n", run_time);
+		#endif
 	}
 	return 0;
 }

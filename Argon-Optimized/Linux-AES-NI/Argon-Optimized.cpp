@@ -516,7 +516,7 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 		/* All those could be optimized a lot using movd* instructions */
 		__m128i tmp;
 		size_t start=width*i;
-		tmp = tmp ^ tmp;
+		tmp = _mm_xor_si128(tmp, tmp);
 
 		tmp = _mm_insert_epi8(tmp, (int)Input[12*i +  0],  0);
 		tmp = _mm_insert_epi8(tmp, (int)Input[12*i +  1],  1);
@@ -654,9 +654,9 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 			i5 = __rdtscp(&ui4);
 #endif
 	__m128i a1_intr;
-	a1_intr = a1_intr ^ a1_intr;
+	a1_intr = _mm_xor_si128(a1_intr,a1_intr);
 	__m128i a2_intr;
-	a2_intr = a2_intr ^ a2_intr;
+	a2_intr = _mm_xor_si128(a2_intr,a2_intr);
 	for(uint32_t i=0; i< state_size; ++i)
 	{
 		if(i%(state_size/32)<state_size/64)   //First w/64 of each slice of size w/32
