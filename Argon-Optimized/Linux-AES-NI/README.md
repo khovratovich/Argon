@@ -8,3 +8,5 @@ Can be compiled with: (gcc-4.7.3)
 	
 Benchmarking 256 MBytes with 4 threads:
 -taglength 32 -logmcost 18 -tcost 3 -pwdlen 64 -saltlen 16 -threads 4
+
+Benchmarking for 2^d MBytes for d from 1 to 12 and for 1 to 16 threads: -benchmark
