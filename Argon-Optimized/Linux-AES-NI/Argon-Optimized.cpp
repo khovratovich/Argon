@@ -711,7 +711,7 @@ int ArgonFast64(void *out, size_t outlen, const void *in, size_t inlen, const vo
 	fclose(fp);
 #endif
 
-	delete state;
+	delete[] state;
 	return 0;
 }
 
