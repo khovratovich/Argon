@@ -11,7 +11,7 @@
 #define _MEASURE
 //#define _MEASUREINT 
 #define THREADING
-#define RANDOMIZE //make slice selection pseudo-random
+//#define RANDOMIZE //make slice selection pseudo-random
 
 #include "stdio.h"
 #include "inttypes.h"
@@ -338,7 +338,7 @@ void SubGroupsThr(__m128i* state, size_t group_n, size_t distance) //elements of
 }
 
 
-void GenPermutation32(uint8_t* out)
+void GenPermutation32(uint8_t out[32])
 {
 	if (out == NULL)
 		return;
@@ -353,12 +353,11 @@ void GenPermutation32(uint8_t* out)
 		uint8_t index = 0;
 		while (value != 0)//Go over unassigned values for the permutation
 		{
-			if (!filled[index])//Skip allocated values
-				value--;
 			index++;
 			if (index == 32)
 				index = 0;
-		
+			if (!filled[index])//Skip allocated values
+				value--;		
 		}
 		filled[index] = true;
 		out[i] = index;
@@ -538,10 +537,27 @@ int ArgonFast64Ext(void *out, size_t outlen, const void *in, size_t inlen, const
 #endif
 
 
+
 //4.2 Other rounds
 memset(Input, 0, INPUT_SIZE);
 for (unsigned l = 0; l <t_cost; ++l)
 {
+#ifdef RANDOMIZE
+	uint8_t perm[32];
+	GenPermutation32(perm);
+	size_t slice_length = state_size / GROUP_SIZE;
+	for(unsigned i=0; i<32; ++i)
+	{
+		Threads.push_back(thread(ShuffleSlicesThr, state + i*slice_length, slice_length, 1));
+		if (((i + 1)%thread_n == 0) || (i+1 == 32))
+		{
+			for (auto& th : Threads)
+				th.join();
+			Threads.clear();
+		}
+	}
+#else
+
 	unsigned slices_per_thread = GROUP_SIZE / thread_n;//Area size of each thread.
 	size_t slice_length = state_size / GROUP_SIZE;
 	for (unsigned i = 0; i<thread_n - 1; ++i)
@@ -552,6 +568,8 @@ for (unsigned l = 0; l <t_cost; ++l)
 	for (auto& th : Threads)
 		th.join();
 	Threads.clear();
+#endif
+
 
 #ifdef _MEASUREINT
 	i4 = __rdtscp(&ui4);
@@ -590,10 +608,8 @@ for (unsigned l = 0; l <t_cost; ++l)
 
 	//5.Finalization
 
-	__m128i a1_intr;
-	a1_intr = _mm_xor_si128(a1_intr, a1_intr);
-	__m128i a2_intr;
-	a2_intr = _mm_xor_si128(a2_intr, a2_intr);
+	__m128i a1_intr = _mm_set_epi64x(0,0);
+	__m128i a2_intr= _mm_set_epi64x(0, 0);
 	for (uint32_t i = 0; i< state_size; ++i)
 	{
 		if (i % (state_size / 32)<state_size / 64)   //First w/64 of each slice of size w/32
