@@ -6,17 +6,19 @@
 //To enable measurement of SubGroups and ShuffleSlices, uncomment #define _MEASUREINT
 //Threading is always enabled
 
-//#define KAT
-//#define KAT_INTERNAL
+#define KAT
+#define KAT_INTERNAL
 #define _MEASURE
 //#define _MEASUREINT 
 #define THREADING
+#define RANDOMIZE //make slice selection pseudo-random
 
 #include "stdio.h"
 #include "inttypes.h"
 #include <time.h>
 #include <vector>
 #include <thread>
+#include <random>
 #include <cstring>
 #include <cstdint>
 using namespace std;
@@ -198,7 +200,7 @@ inline void AES_reduced_batch_intr(__m128i* batch, uint32_t batch_size) //Encryp
 
 
 
-void SubGroupsThrExtended(__m128i* state, size_t group_n, size_t distance, unsigned char* Input) //SubGroupsThr prepended by Initial round
+void SubGroupsThrExtended(__m128i* state, size_t group_n, size_t distance, unsigned char* Input, size_t shift) //SubGroupsThr prepended by Initial round
 {
 
 	__m128i groups[MAX_CACHE][GROUP_SIZE];
@@ -213,7 +215,7 @@ void SubGroupsThrExtended(__m128i* state, size_t group_n, size_t distance, unsig
 		{
 			for (size_t j = 0; j<cached; ++j)
 			{
-				groups[j][l] = _mm_set_epi32((uint32_t)((i + j)*GROUP_SIZE + l),((uint32_t*)Input)[l * 3+2], ((uint32_t*)Input)[l * 3 + 1],
+				groups[j][l] = _mm_set_epi32((uint32_t)((i + j+shift)*GROUP_SIZE + l),((uint32_t*)Input)[l * 3+2], ((uint32_t*)Input)[l * 3 + 1],
 					((uint32_t*)Input)[l * 3 ]); //I[l]||((i+j)*GROUP_SIZE+l)
 			}
 		}
@@ -335,6 +337,34 @@ void SubGroupsThr(__m128i* state, size_t group_n, size_t distance) //elements of
 	}
 }
 
+
+void GenPermutation32(uint8_t* out)
+{
+	if (out == NULL)
+		return;
+	//Assume that memory for out is allocated
+	vector<bool> filled(32, false);
+
+	std::mt19937 gen;  //Starting PRNG
+	gen.seed(time(0));
+	for (unsigned i = 0; i < 32; ++i)
+	{
+		uint8_t value = gen();
+		uint8_t index = 0;
+		while (value != 0)//Go over unassigned values for the permutation
+		{
+			if (!filled[index])//Skip allocated values
+				value--;
+			index++;
+			if (index == 32)
+				index = 0;
+		
+		}
+		filled[index] = true;
+		out[i] = index;
+	}
+
+}
 
 
 
@@ -484,16 +514,16 @@ int ArgonFast64Ext(void *out, size_t outlen, const void *in, size_t inlen, const
 	
 
 
-	//4.1 First round: 
+	//4.1 First call to SubGroups: 
 	vector<thread> Threads;
 
 	//Each thread processes a certain number of groups
 	size_t distance = state_size / GROUP_SIZE;
 	size_t groups_per_thread = distance / (thread_n);//Area size of each thread.
 	for (unsigned i = 0; i<thread_n - 1; ++i)
-		Threads.push_back(thread(SubGroupsThrExtended, state + i*groups_per_thread, groups_per_thread, distance, Input));
+		Threads.push_back(thread(SubGroupsThrExtended, state + i*groups_per_thread, groups_per_thread, distance, Input, i*groups_per_thread));
 	//Last thread with possibly larger area
-	Threads.push_back(thread(SubGroupsThrExtended, state + (thread_n - 1)*groups_per_thread, distance - (thread_n - 1)*groups_per_thread, distance,Input));
+	Threads.push_back(thread(SubGroupsThrExtended, state + (thread_n - 1)*groups_per_thread, distance - (thread_n - 1)*groups_per_thread, distance, Input, (thread_n - 1)*groups_per_thread));
 	for (auto& th : Threads)
 		th.join();
 	Threads.clear();
@@ -507,6 +537,11 @@ int ArgonFast64Ext(void *out, size_t outlen, const void *in, size_t inlen, const
 	dumpState(fp, state, state_size);
 #endif
 
+
+//4.2 Other rounds
+memset(Input, 0, INPUT_SIZE);
+for (unsigned l = 0; l <t_cost; ++l)
+{
 	unsigned slices_per_thread = GROUP_SIZE / thread_n;//Area size of each thread.
 	size_t slice_length = state_size / GROUP_SIZE;
 	for (unsigned i = 0; i<thread_n - 1; ++i)
@@ -528,10 +563,7 @@ int ArgonFast64Ext(void *out, size_t outlen, const void *in, size_t inlen, const
 	dumpState(fp, state, state_size);
 #endif
 
-	//4.2 Second round
-	memset(Input, 0, INPUT_SIZE);
-	for (unsigned l = 1; l <t_cost; ++l)
-	{
+	
 		//Each thread processes a certain number of groups
 		size_t distance = state_size / GROUP_SIZE;
 		size_t groups_per_thread = distance / (thread_n);//Area size of each thread.
@@ -554,48 +586,10 @@ int ArgonFast64Ext(void *out, size_t outlen, const void *in, size_t inlen, const
 		dumpState(fp, state, state_size);
 #endif
 
-		unsigned slices_per_thread = GROUP_SIZE / thread_n;//Area size of each thread.
-		size_t slice_length = state_size / GROUP_SIZE;
-		for (unsigned i = 0; i<thread_n - 1; ++i)
-			Threads.push_back(thread(ShuffleSlicesThr, state + i*slices_per_thread*slice_length, slice_length, slices_per_thread));
-		//Last thread
-		Threads.push_back(thread(ShuffleSlicesThr, state + (thread_n - 1)*slices_per_thread*slice_length, slice_length, GROUP_SIZE - (thread_n - 1)*slices_per_thread));
-		//Wrapping up
-		for (auto& th : Threads)
-			th.join();
-		Threads.clear();
-
-#ifdef _MEASUREINT
-		i4 = __rdtscp(&ui4);
-		d1 = (i4 - i5) / (state_size);
-		printf("ShuffleSlices %2.2f cpb\n", (float)d1 / (16));
-#endif
-#if defined(KAT) && defined(KAT_INTERNAL)
-		fprintf(fp, "After ShuffleSlices:\nBlocks:\n");
-		dumpState(fp, state, state_size);
-#endif
 	}
 
 	//5.Finalization
 
-	//Each thread processes a certain number of groups
-	distance = state_size / GROUP_SIZE;
-	groups_per_thread = distance / (thread_n);//Area size of each thread.
-	for (unsigned i = 0; i<thread_n - 1; ++i)
-		Threads.push_back(thread(SubGroupsThr, state + i*groups_per_thread, groups_per_thread, distance));
-	//Last thread with posssibly larger area
-	Threads.push_back(thread(SubGroupsThr, state + (thread_n - 1)*groups_per_thread, distance - (thread_n - 1)*groups_per_thread, distance));
-	for (auto& th : Threads)
-		th.join();
-	Threads.clear();
-
-#if defined(KAT) && defined(KAT_INTERNAL)
-	fprintf(fp, "Last round: After SubGroups:\nBlocks:\n");
-	dumpState(fp, state, state_size);
-#endif
-#ifdef _MEASUREINT
-	i5 = __rdtscp(&ui4);
-#endif
 	__m128i a1_intr;
 	a1_intr = _mm_xor_si128(a1_intr, a1_intr);
 	__m128i a2_intr;
@@ -679,40 +673,43 @@ void GenKat(unsigned outlen)
 	for (unsigned m_cost = 1; m_cost <= 10; m_cost *= 10)
 	{
 
-		for (unsigned p_len = 0; p_len <= 256; p_len += 64)
+		for (unsigned p_len = 0; p_len < 256; p_len += 128)
 		{
-			for (unsigned s_len = 8; s_len <= 32; s_len += 16)
+			for (unsigned s_len = 8; s_len <= 24; s_len += 16)
 			{
+				for (unsigned thr = 1; thr <= 4; ++thr)
+				{
+
 #ifdef _MEASURE
-				uint64_t  i2, i3, d2;
-				uint32_t ui2, ui3;
+					uint64_t  i2, i3, d2;
+					uint32_t ui2, ui3;
 #endif
 
 
-				outlen = s_len;
+					outlen = s_len;
 #ifdef _MEASURE
-				clock_t start = clock();
-				i2 = __rdtscp(&ui2);
+					clock_t start = clock();
+					i2 = __rdtscp(&ui2);
 #endif
-
-				PHS(out, outlen, sbox, p_len, subkeys[5], s_len, t_cost, m_cost);
+					PHS(out, outlen, sbox, p_len, subkeys[5], s_len, t_cost, m_cost, thr);
 
 #ifdef _MEASURE
-				i3 = __rdtscp(&ui3);
-				clock_t finish = clock();
+					i3 = __rdtscp(&ui3);
+					clock_t finish = clock();
 
-				d2 = (i3 - i2) / (m_cost);
-				float mcycles = (float)(i3 - i2) / (1 << 20);
-				printf("Argon:  %d iterations %2.2f cpb %2.2f Mcycles\n", t_cost, (float)d2 / 1000, mcycles);
+					d2 = (i3 - i2) / (m_cost);
+					float mcycles = (float)(i3 - i2) / (1 << 20);
+					printf("Argon:  %d iterations %2.2f cpb %2.2f Mcycles\n", t_cost, (float)d2 / 1000, mcycles);
 
-				printf("Tag: ");
-				for (unsigned i = 0; i < outlen; ++i)
-					printf("%2.2x ", ((unsigned char*)out)[i]);
-				printf("\n");
+					printf("Tag: ");
+					for (unsigned i = 0; i < outlen; ++i)
+						printf("%2.2x ", ((unsigned char*)out)[i]);
+					printf("\n");
 
-				float run_time = ((float)finish - start) / (CLOCKS_PER_SEC);
-				printf("%2.4f seconds\n", run_time);
+					float run_time = ((float)finish - start) / (CLOCKS_PER_SEC);
+					printf("%2.4f seconds\n", run_time);
 #endif
+				}
 			}
 		}
 	}
