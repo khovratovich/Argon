@@ -257,15 +257,19 @@ int ArgonRef(uint8_t *out, uint32_t outlen, const uint8_t *pwd, uint32_t pwdlen,
 	blake2b_update(&BlakeHash, (const uint8_t*)&(a2.i0), 8);
 	blake2b_update(&BlakeHash, (const uint8_t*)&(a2.i1), 8);
 
-	while (outlen > 32)
+	uint8_t* out_flex = out;
+	uint32_t outlen_flex = outlen;
+	while (outlen_flex > 16)
 	{
 		blake2b_final(&BlakeHash, tag_buffer, 32);
-		memcpy(out, tag_buffer, 32);
-		out += 32;
-		outlen -= 32;
+		memcpy(out_flex, tag_buffer, 16);
+		out_flex += 16;
+		outlen_flex -= 16;
+		blake2b_init(&BlakeHash, 32);
+		blake2b_update(&BlakeHash, tag_buffer, 32);
 	}
-	blake2b_final(&BlakeHash, tag_buffer, outlen);
-	memcpy(out, tag_buffer, outlen);
+	blake2b_final(&BlakeHash, tag_buffer, outlen_flex);
+	memcpy(out, tag_buffer, outlen_flex);
 	memset(tag_buffer, 0, 32);
 #ifdef KAT
 	fprintf(fp,"Tag: ");

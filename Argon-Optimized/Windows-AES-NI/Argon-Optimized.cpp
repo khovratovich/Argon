@@ -472,9 +472,10 @@ for (unsigned l = 0; l <t_cost; ++l)
 	for (uint32_t i = 0; i< state_size/2; ++i)
 	{
 		a1_intr = _mm_xor_si128(a1_intr, state[i]);
+		state[i] = _mm_set_epi64x(0, 0);
 		a2_intr = _mm_xor_si128(a2_intr, state[i+state_size / 2]);
+		state[i + state_size / 2] = _mm_set_epi64x(0, 0);
 	}
-	memset(state, 0, state_size + sizeof(__m128i));
 	int128 a1(_mm_extract_epi64(a1_intr, 0), _mm_extract_epi64(a1_intr, 1));
 	int128 a2(_mm_extract_epi64(a2_intr, 0), _mm_extract_epi64(a2_intr, 1)); 
 	uint8_t tag_buffer[32];
@@ -485,16 +486,27 @@ for (unsigned l = 0; l <t_cost; ++l)
 	blake2b_update(&BlakeHash, (const uint8_t*)&(a2.i0), 8);
 	blake2b_update(&BlakeHash, (const uint8_t*)&(a2.i1), 8);
 
-	while (outlen > 32)
+	uint8_t* out_flex = out;
+	uint32_t outlen_flex = outlen;
+	while (outlen_flex > 16)
 	{
 		blake2b_final(&BlakeHash, tag_buffer, 32);
-		memcpy(out, tag_buffer, 32);
-		out += 32;
-		outlen -= 32;
+		memcpy(out_flex, tag_buffer, 16);
+		out_flex += 16;
+		outlen_flex -= 16;
+		blake2b_init(&BlakeHash, 32);
+		blake2b_update(&BlakeHash, tag_buffer, 32);
 	}
-	blake2b_final(&BlakeHash, tag_buffer, outlen);
-	memcpy(out, tag_buffer, outlen);
+	blake2b_final(&BlakeHash, tag_buffer, outlen_flex);
+	memcpy(out, tag_buffer, outlen_flex);
 	memset(tag_buffer, 0, 32);
+#ifdef KAT
+	fprintf(fp,"Tag: ");
+	for(unsigned i=0; i<outlen; ++i)
+		fprintf(fp, "%2.2x ", ((uint8_t*)out)[i]);
+	fprintf(fp, "\n");
+	fclose(fp);
+#endif KAT
 
 #ifdef _MEASUREINT
 	i6 = __rdtscp(&ui6);
@@ -502,13 +514,6 @@ for (unsigned l = 0; l <t_cost; ++l)
 	printf("Final phase %2.2f cpb\n", (float)d1 / (16));
 	d2 = (i6 - i1) / (state_size);
 	printf("Total %2.2f cpb\n", (float)d2 / (16));
-#endif
-#ifdef KAT
-	fprintf(fp, "Tag: ");
-	for (unsigned i = 0; i<outlen; ++i)
-		fprintf(fp, "%2.2x ", ((unsigned char*)out)[i]);
-	fprintf(fp, "\n");
-	fclose(fp);
 #endif
 
 	delete[] state;
