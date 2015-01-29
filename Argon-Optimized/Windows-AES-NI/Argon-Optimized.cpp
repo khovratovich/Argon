@@ -404,17 +404,13 @@ for (unsigned l = 0; l <t_cost; ++l)
 #ifdef RANDOMIZE
 	uint8_t perm[32];
 	GenPermutation32(perm);
-	size_t slice_length = state_size / GROUP_SIZE;
-	for(unsigned i=0; i<32; ++i)
-	{
-		Threads.push_back(thread(ShuffleSlicesThr, state + i*slice_length, slice_length, 1));
-		if (((i + 1)%thread_n == 0) || (i+1 == 32))
-		{
-			for (auto& th : Threads)
-				th.join();
-			Threads.clear();
-		}
-	}
+	uint32_t slice_length = (state_size / parallel_degree);
+	for (unsigned i = 0; i<parallel_degree; ++i)
+		Threads.push_back(thread(ShuffleSlicesThr, state + perm[i]*slice_length, slice_length, 1));
+	//Wrapping up
+	for (auto& th : Threads)
+		th.join();
+	Threads.clear();
 #else
 	uint32_t slice_length = (state_size / parallel_degree);
 	for (unsigned i = 0; i<parallel_degree - 1; ++i)
@@ -498,7 +494,7 @@ for (unsigned l = 0; l <t_cost; ++l)
 		blake2b_update(&BlakeHash, tag_buffer, 32);
 	}
 	blake2b_final(&BlakeHash, tag_buffer, outlen_flex);
-	memcpy(out, tag_buffer, outlen_flex);
+	memcpy(out_flex, tag_buffer, outlen_flex);
 	memset(tag_buffer, 0, 32);
 #ifdef KAT
 	fprintf(fp,"Tag: ");

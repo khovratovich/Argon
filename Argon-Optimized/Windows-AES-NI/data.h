@@ -4,7 +4,7 @@
 #define _MEASURE
 //#define _MEASUREINT 
 #define THREADING
-//#define RANDOMIZE //make slice selection pseudo-random
+#define RANDOMIZE //make slice selection pseudo-random
 
 
 #define MAX_THREADS 32
