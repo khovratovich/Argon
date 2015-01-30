@@ -214,23 +214,23 @@ void SubGroupsThr(__m128i* state, size_t group_n, size_t distance) //elements of
 }
 
 
-void GenPermutation32(uint8_t out[32])
+void GenPermutation(uint8_t out[32], uint8_t lanes)
 {
 	if (out == NULL)
 		return;
 	//Assume that memory for out is allocated
-	vector<bool> filled(32, false);
+	vector<bool> filled(lanes, false);
 
 	std::mt19937 gen;  //Starting PRNG
 	gen.seed(time(0));
-	for (unsigned i = 0; i < 32; ++i)
+	for (unsigned i = 0; i < lanes; ++i)
 	{
 		uint8_t value = gen();
 		uint8_t index = 0;
 		while (value != 0)//Go over unassigned values for the permutation
 		{
 			index++;
-			if (index == 32)
+			if (index == lanes)
 				index = 0;
 			if (!filled[index])//Skip allocated values
 				value--;		
@@ -403,7 +403,7 @@ for (unsigned l = 0; l <t_cost; ++l)
 {
 #ifdef RANDOMIZE
 	uint8_t perm[32];
-	GenPermutation32(perm);
+	GenPermutation(perm,parallel_degree);
 	uint32_t slice_length = (state_size / parallel_degree);
 	for (unsigned i = 0; i<parallel_degree; ++i)
 		Threads.push_back(thread(ShuffleSlicesThr, state + perm[i]*slice_length, slice_length, 1));
