@@ -502,7 +502,7 @@ for (unsigned l = 0; l <t_cost; ++l)
 		fprintf(fp, "%2.2x ", ((uint8_t*)out)[i]);
 	fprintf(fp, "\n");
 	fclose(fp);
-#endif KAT
+#endif 
 
 #ifdef _MEASUREINT
 	i6 = __rdtscp(&ui6);

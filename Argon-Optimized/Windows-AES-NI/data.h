@@ -1,5 +1,5 @@
 
-//#define KAT
+#define KAT
 //#define KAT_INTERNAL
 #define _MEASURE
 //#define _MEASUREINT 
