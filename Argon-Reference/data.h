@@ -1,0 +1,56 @@
+
+struct int128{
+	uint64_t i0, i1;
+	int128(uint64_t y0 = 0, uint64_t y1 = 0){ i0 = y0; i1 = y1; };
+	int128& operator^=(const int128 &r){ i0 ^= r.i0; i1 ^= r.i1; return *this; }
+	int128& operator=(const int128 &r){ i0 = r.i0; i1 = r.i1; return *this; }
+	uint8_t operator[](unsigned i)
+	{
+		if (i<8)
+			return (i0 >> (8 * i)) & 0xff;
+		else if (i<16)
+			return (i1 >> (8 * (i - 8))) & 0xff;
+		return 0;
+	}
+	int128 operator^(const int128 &r){ return int128(i0 ^ r.i0, i1^r.i1); }
+};
+
+struct Blake2b{
+	void Init();
+	void Update();
+	void Finalize();
+};
+
+#define MAX_SLICE 32
+#define MIN_SLICE 1
+#define MAX_OUTLEN 0xFFFFFFFF
+#define MIN_OUTLEN 4
+#define MIN_MEMORY 1
+#define MAX_MEMORY 0xFFFFFF
+#define MIN_TIME 2
+#define LENGTH_SIZE 4
+#define MIN_PASSWORD 0
+#define MAX_PASSWORD 0xFFFFFFFF
+#define MAX_AD 0xFFFFFFFF
+#define MAX_SALT  0xFFFFFFFF
+#define MIN_SALT  8
+#define MIN_SECRET  0
+#define MAX_SECRET 16
+#define MIN_AD  0
+#define INPUT_SIZE (INPUT_BLOCKS*12)
+#define INPUT_BLOCKS 32
+#define CACHE_SIZE 128
+#define BATCH_SIZE 16   //should be not larger than 32
+#define GROUP_SIZE 32
+
+
+#define KAT
+#define _MEASURE
+//#define KATINT
+
+#define AES_ROUNDS 5
+
+extern void AES_reduced(int128 &input);
+extern void Init();
+extern int ArgonRef(uint8_t *out, uint32_t outlen, const uint8_t *pwd, uint32_t pwdlen, const uint8_t *salt, uint32_t saltlen, const uint8_t *secret,
+	uint8_t secretlen, const void *ad, uint32_t adlen, uint32_t t_cost, uint32_t m_cost, uint8_t parallel_degree);
